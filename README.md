@@ -105,7 +105,7 @@ name: [workshop-name]
 base: ubuntu@[version]  # e.g., ubuntu@24.04
 sdks:
   - name: [sdk-name]
-    channel: [channel]  # e.g., all/edge, 24.04/edge
+    channel: [channel]  # e.g., 1.24/stable
 
 actions:
   [action-name]: |
