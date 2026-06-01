@@ -45,17 +45,16 @@ renovate.json          Renovate config — watches can1357/oh-my-pi github-relea
 
 ## Branch/CI structure
 
-- `main`: template branch — has `renovate.json` + Renovate workflows, no VERSION file
-- `track/15`: version branch for 15.x line — has VERSION + build/upload workflows, no Renovate workflows
+- `track/15`: default branch — has VERSION, all workflows (build, upload, Renovate)
+- No `main` branch; Renovate runs from the default branch
 
 To bootstrap a new major-version branch (e.g., `track/16` when upstream goes to 16.x):
-1. `git checkout -b track/16 main`
-2. `git rm .github/workflows/renovate.yml .github/workflows/renovate-check.yml`
-3. Update `VERSION` to the first 16.x release
-4. Update `build.yml` and `upload.yml`: branch `"track/15"` → `"track/16"`
-5. `git commit -m "chore: configure 16/edge track"`
-6. `git push -u origin track/16`
-7. On `main`: add `"track/16"` to `baseBranchPatterns` with `allowedVersions: "/^16\\./"`.
+1. `git checkout -b track/16 track/15`
+2. Update `VERSION` to the first 16.x release
+3. Update `build.yml` and `upload.yml`: branch `"track/15"` → `"track/16"`
+4. Update `renovate.json`: `"track/15"` → `"track/16"`, `allowedVersions: "/^16\\./"` 
+5. `git commit -m "chore: configure 16/edge track" && git push -u origin track/16`
+6. `gh api repos/<owner>/omp-workshop-sdk -X PATCH -f default_branch='track/16'`
 
 ## Iterate locally
 

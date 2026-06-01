@@ -4,15 +4,12 @@
 
 | Branch | Purpose | Contains |
 |--------|---------|---------|
-| `main` | Template / Renovate host | SDK source, `renovate.json`, Renovate workflows — no `VERSION` |
-| `track/<N>` | Buildable version branch for major `N` | `VERSION`, `build.yml`, `upload.yml` — no Renovate workflows |
+| `track/<N>` | Buildable version branch for major `N` | `VERSION`, all workflows including Renovate |
 
-`track/15` is currently the **default branch** — what `sdkcraft pack` / `sdkcraft try` and
-casual `git clone` users land on. When the next upstream major ships, roll the default branch
-forward to `track/16` (see below).
-
-`main` is never built directly. It exists so Renovate has a stable home for its workflows
-and config, independent of which `track/*` branch is current.
+There is no long-lived `main`. The **default branch** is always the current active track
+(`track/15` right now). `git clone` and `sdkcraft pack` / `sdkcraft try` land here directly.
+When the next upstream major ships, roll the default branch forward to the new `track/*`
+(see below).
 
 ## Release automation
 
@@ -20,7 +17,7 @@ and config, independent of which `track/*` branch is current.
 upstream releases v15.x.y on GitHub
          │
          ▼
-Renovate (scheduled on main, Mon–Fri 04:00 UTC)
+Renovate (scheduled on the default branch, Mon–Fri 04:00 UTC)
   reads VERSION on track/15, detects newer 15.x release
   opens PR: VERSION 15.7.3 → 15.x.y
          │
@@ -34,8 +31,9 @@ upload.yml  (push to track/15)
 ```
 
 Key config points:
-- `renovate.json` on `main` sets `baseBranchPatterns: ["track/15"]` and
-  `allowedVersions: "/^15\\./"`  — Renovate targets only the right branch and never
+Key config points:
+- `renovate.json` on the default branch (`track/15`) sets `baseBranchPatterns: ["track/15"]`
+  and `allowedVersions: "/^15\\./"`  — Renovate targets only the right branch and never
   proposes a major-version bump across the track boundary.
 - `automerge: true` / `automergeType: "pr"` — Renovate merges automatically once
   all required checks pass. **Requires branch protection on `track/*` with the `build`
@@ -53,7 +51,7 @@ This single rule covers every current and future `track/*` branch automatically.
 
 ## Local development
 
-Always work from the version branch, not `main`:
+Always work from a `track/*` branch:
 
 ```bash
 git checkout track/15
@@ -69,41 +67,34 @@ workshop info   # runs check-health
 
 When upstream releases `v16.0.0` (or any `16.x`):
 
-1. Create the new version branch from `main`:
+1. Create the new version branch from the current default:
    ```bash
-   git checkout -b track/16 main
+   git checkout -b track/16 track/15
    ```
 
-2. Remove Renovate workflows (they live on `main` only):
-   ```bash
-   git rm .github/workflows/renovate.yml .github/workflows/renovate-check.yml
-   ```
-
-3. Set `VERSION` to the first 16.x release:
+2. Set `VERSION` to the first 16.x release:
    ```bash
    echo "16.0.0" > VERSION
    ```
 
-4. Update the branch references in both CI workflows:
+3. Update the branch references in the CI workflows and `renovate.json`:
    ```bash
    # .github/workflows/build.yml  — branches: ["track/15"] → ["track/16"]
    # .github/workflows/upload.yml — branches: ["track/15"] → ["track/16"]
+   # renovate.json — baseBranchPatterns, matchBaseBranches: "track/15" → "track/16"
+   #                 allowedVersions: "/^15\\./" → "/^16\\./"
    ```
 
-5. Commit and push:
+4. Commit and push:
    ```bash
    git add -A && git commit -m "chore: configure 16/edge track"
    git push -u origin track/16
    ```
 
-6. On `main`, extend `renovate.json` — add `track/16` to `baseBranchPatterns` and
-   add a new package rule mirroring the `track/15` entry with `allowedVersions: "/^16\\./"`
-   targeting `matchBaseBranches: ["track/16"]`. Commit and push `main`.
-
-7. Roll the GitHub default branch from `track/15` to `track/16`:
+5. Roll the GitHub default branch:
    ```bash
    gh api repos/<owner>/omp-workshop-sdk -X PATCH -f default_branch='track/16'
    ```
 
-8. Set branch protection for `track/16` — covered automatically by the existing
+6. Branch protection for `track/16` is covered automatically by the existing
    `track/*` rule; no action needed.
