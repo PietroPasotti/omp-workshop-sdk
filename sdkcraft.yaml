@@ -1,0 +1,32 @@
+name: omp
+adopt-info: omp
+summary: Oh My Pi — AI coding agent for the terminal
+description: |
+  This SDK provides omp, the oh-my-pi AI coding agent. It ships with
+  hash-anchored edits, LSP integration, DAP debugging, persistent Python
+  and JS eval kernels, first-class subagents, and 40+ AI provider
+  connections out of the box. Configuration, sessions, memory (Hindsight),
+  and plugins are persisted across workshop updates.
+license: MIT
+platforms:
+  ubuntu@22.04:amd64:
+  ubuntu@24.04:amd64:
+
+plugs:
+  omp-home:
+    interface: mount
+    workshop-target: /home/workshop/.omp
+
+parts:
+  omp:
+    plugin: dump
+    source: .
+    source-type: local
+    override-pull: |
+      VERSION=$(cat "$CRAFT_PROJECT_DIR/VERSION")
+      craftctl set version="$VERSION"
+      curl -fLO "https://github.com/can1357/oh-my-pi/releases/download/v${VERSION}/omp-linux-x64"
+      mv omp-linux-x64 omp
+      chmod +x omp
+    organize:
+      omp: bin/omp

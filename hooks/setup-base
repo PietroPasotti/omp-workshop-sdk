@@ -1,0 +1,6 @@
+#!/usr/bin/bash
+cat <<EOF >/etc/profile.d/omp.sh
+export PATH="${SDK}/bin:\$PATH"
+EOF
+
+"${SDK}/bin/omp" completions bash > /etc/bash_completion.d/omp.sh

@@ -3,9 +3,7 @@ name: Build SDK
 on:
   pull_request:
     branches:
-      # TODO: set branch pattern matching your version branches
-      # Examples: "[0-9]+" for major-only, "[0-9]+.[0-9]+" for major.minor
-      - \"[0-9]+\"
+      - latest
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref || github.run_id }}

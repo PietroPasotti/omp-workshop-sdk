@@ -1,0 +1,6 @@
+#!/usr/bin/bash
+if ! sudo -u workshop --login omp --version >/dev/null 2>&1; then
+    workshopctl set-health error "omp not available on PATH"
+    exit 0
+fi
+workshopctl set-health okay
