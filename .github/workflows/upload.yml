@@ -3,11 +3,11 @@ name: Build and Upload SDK
 on:
   push:
     branches:
-      - "15"
+      - "track/15"
   workflow_dispatch:
     inputs:
       branch:
-        description: "Branch name (e.g., 15)"
+        description: "Branch name (e.g., track/15)"
         required: true
         type: string
 

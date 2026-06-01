@@ -18,8 +18,8 @@ hooks/check-health     Verifies omp --version (runs as root)
 VERSION                Current upstream version (single line, e.g. 15.7.4)
 renovate.json          Renovate config — watches can1357/oh-my-pi github-releases
 .github/workflows/
-  build.yml            PR check: builds on PRs targeting branch 15
-  upload.yml           Release: builds + uploads to 15/edge on push to branch 15
+  build.yml            PR check: builds on PRs targeting track/15
+  upload.yml           Release: builds + uploads to 15/edge on push to track/15
   renovate.yml         Renovate bot schedule (main branch only)
   renovate-check.yml   Validates renovate.json on PRs (main branch only)
 ```
@@ -36,7 +36,7 @@ renovate.json          Renovate config — watches can1357/oh-my-pi github-relea
 ## Key design facts
 
 - **Multi-base**: `ubuntu@22.04:amd64` + `ubuntu@24.04:amd64` (no `build-base` field)
-- **Track**: `15/edge` — branch `15`, one branch per upstream major
+- **Track**: `15/edge` — branch `track/15`, one branch per upstream major under `track/*`
 - **Persistence**: single mount plug `omp-home` → `/home/workshop/.omp`
   All omp state (agent.db, history.db, sessions/, memories/, plugins/, python-env/) lives there
 - **No network service**: omp is a CLI tool; no tunnel slot needed
@@ -46,16 +46,16 @@ renovate.json          Renovate config — watches can1357/oh-my-pi github-relea
 ## Branch/CI structure
 
 - `main`: template branch — has `renovate.json` + Renovate workflows, no VERSION file
-- `15`: version branch for 15.x line — has VERSION + build/upload workflows, no Renovate workflows
+- `track/15`: version branch for 15.x line — has VERSION + build/upload workflows, no Renovate workflows
 
-To bootstrap a new major-version branch (e.g., `16` when upstream goes to 16.x):
-1. `git checkout -b 16 main`
+To bootstrap a new major-version branch (e.g., `track/16` when upstream goes to 16.x):
+1. `git checkout -b track/16 main`
 2. `git rm .github/workflows/renovate.yml .github/workflows/renovate-check.yml`
 3. Update `VERSION` to the first 16.x release
-4. Update `build.yml` and `upload.yml`: branch `"15"` → `"16"`
+4. Update `build.yml` and `upload.yml`: branch `"track/15"` → `"track/16"`
 5. `git commit -m "chore: configure 16/edge track"`
-6. `git push -u origin 16`
-7. On `main`: update `renovate.json` baseBranchPatterns to add `"16"` with `allowedVersions: "/^16\\./"`.
+6. `git push -u origin track/16`
+7. On `main`: add `"track/16"` to `baseBranchPatterns` with `allowedVersions: "/^16\\./"`.
 
 ## Iterate locally
 
