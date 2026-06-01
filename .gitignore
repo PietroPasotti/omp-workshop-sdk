@@ -1,6 +1,4 @@
 # sdkcraft build artifacts
 *.sdk
-# workshop snap required locally for sdkcraft test (not committed — use a symlink)
-tests/workshop_*.snap
 # spread local state
 tests/.spread-reuse.yaml
