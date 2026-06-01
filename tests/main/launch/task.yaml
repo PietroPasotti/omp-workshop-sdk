@@ -1,0 +1,28 @@
+summary: Smoke-test omp SDK on ${BASE}
+
+prepare: |
+  envsubst '${BASE}' <workshop.yaml.in >workshop.yaml
+  workshop launch
+
+restore: |
+  workshop remove || true
+
+execute: |
+  # omp must be on PATH
+  workshop exec -- bash -c 'command -v omp'
+
+  # binary must start and report its version cleanly
+  workshop exec -- omp --version
+
+  # version output must look like a semver (N.N.N)
+  workshop exec -- omp --version | grep -qE '[0-9]+\.[0-9]+\.[0-9]+'
+
+  # bash completions must have been installed by setup-base
+  workshop exec -- bash -c 'test -f /etc/bash_completion.d/omp.sh'
+
+  # health check must pass (exercises check-health hook)
+  workshop info | grep -q healthy
+
+debug: |
+  workshop tasks
+  workshop exec -- bash -c 'omp --version || true'

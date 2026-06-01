@@ -1,0 +1,4 @@
+name: test-omp
+base: ${BASE}
+sdks:
+  - name: try-omp
