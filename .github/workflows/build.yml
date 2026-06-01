@@ -3,7 +3,7 @@ name: Build SDK
 on:
   pull_request:
     branches:
-      - latest
+      - "15"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref || github.run_id }}

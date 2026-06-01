@@ -3,11 +3,11 @@ name: Build and Upload SDK
 on:
   push:
     branches:
-      - latest
+      - "15"
   workflow_dispatch:
     inputs:
       branch:
-        description: "Branch name (e.g., latest)"
+        description: "Branch name (e.g., 15)"
         required: true
         type: string
 
@@ -21,6 +21,6 @@ jobs:
     with:
       platforms: '["ubuntu@22.04:amd64","ubuntu@24.04:amd64"]'
       platform-flag: "--platform"
-      risk: "stable"
+      risk: "edge"
     secrets:
       SDKCRAFT_STORE_CREDENTIALS: ${{ secrets.SDKCRAFT_STORE_CREDENTIALS_STAGING }}

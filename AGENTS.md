@@ -18,8 +18,8 @@ hooks/check-health     Verifies omp --version (runs as root)
 VERSION                Current upstream version (single line, e.g. 15.7.4)
 renovate.json          Renovate config — watches can1357/oh-my-pi github-releases
 .github/workflows/
-  build.yml            PR check: builds on push to latest branch
-  upload.yml           Release: builds + uploads to store on push to latest branch
+  build.yml            PR check: builds on PRs targeting branch 15
+  upload.yml           Release: builds + uploads to 15/edge on push to branch 15
   renovate.yml         Renovate bot schedule (main branch only)
   renovate-check.yml   Validates renovate.json on PRs (main branch only)
 ```
@@ -36,7 +36,7 @@ renovate.json          Renovate config — watches can1357/oh-my-pi github-relea
 ## Key design facts
 
 - **Multi-base**: `ubuntu@22.04:amd64` + `ubuntu@24.04:amd64` (no `build-base` field)
-- **Single track**: branch `latest`, no major-version branching
+- **Track**: `15/edge` — branch `15`, one branch per upstream major
 - **Persistence**: single mount plug `omp-home` → `/home/workshop/.omp`
   All omp state (agent.db, history.db, sessions/, memories/, plugins/, python-env/) lives there
 - **No network service**: omp is a CLI tool; no tunnel slot needed
@@ -46,15 +46,16 @@ renovate.json          Renovate config — watches can1357/oh-my-pi github-relea
 ## Branch/CI structure
 
 - `main`: template branch — has `renovate.json` + Renovate workflows, no VERSION file
-- `latest`: version branch — has VERSION file + build/upload workflows, no Renovate workflows
+- `15`: version branch for 15.x line — has VERSION + build/upload workflows, no Renovate workflows
 
-To onboard after initial setup:
-1. Commit all files on main
-2. `git rm VERSION && git commit -m "Remove VERSION from main"`
-3. `git checkout -b latest HEAD~1`
-4. `git rm .github/workflows/renovate.yml .github/workflows/renovate-check.yml`
-5. `git commit -m "Remove Renovate workflows from version branch"`
-6. `git checkout main && git push origin main latest`
+To bootstrap a new major-version branch (e.g., `16` when upstream goes to 16.x):
+1. `git checkout -b 16 main`
+2. `git rm .github/workflows/renovate.yml .github/workflows/renovate-check.yml`
+3. Update `VERSION` to the first 16.x release
+4. Update `build.yml` and `upload.yml`: branch `"15"` → `"16"`
+5. `git commit -m "chore: configure 16/edge track"`
+6. `git push -u origin 16`
+7. On `main`: update `renovate.json` baseBranchPatterns to add `"16"` with `allowedVersions: "/^16\\./"`.
 
 ## Iterate locally
 
