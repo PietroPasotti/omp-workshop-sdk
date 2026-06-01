@@ -106,6 +106,8 @@ omp --version
 
 - [Oh My Pi documentation](https://omp.sh)
 - [Workshop documentation](https://ubuntu.com/workshop/docs/)
+- [DEVELOPERS.md](DEVELOPERS.md) — branch model, release automation, bootstrapping a new major
+- [AGENTS.md](AGENTS.md) — quick-restart context for AI coding agents working in this repo
 
 ---
 
