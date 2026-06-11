@@ -2,6 +2,16 @@ project: omp
 
 path: /home/ubuntu/project
 
+prepare: |
+  snap install lxd --channel=6/stable
+  lxd init --auto
+  snap install workshop --classic
+  # Install the try-built SDK into the workshop try area so 'workshop launch'
+  # finds it. The sdks/ directory is staged by the test runner before invoking
+  # spread (see .gitignore and README/DEVELOPERS.md for details).
+  install -d /root/.local/share/workshop/try/omp
+  cp sdks/omp/* /root/.local/share/workshop/try/omp/
+
 backends:
   lxd:
     systems:
