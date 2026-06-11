@@ -1,53 +1,14 @@
 # Developer guide
 
-## Branch model
+## Pipeline and branch model
 
-| Branch | Purpose | Contains |
-|--------|---------|---------|
-| `track/<N>` | Buildable version branch for major `N` | `VERSION`, all workflows including Renovate |
+See [ADR-0001](docs/adrs/0001-release-automation-pipeline.md) for the full
+rationale and design of the branch-to-track/channel mapping, Renovate
+automation, build/upload pipeline, and branch protection requirements.
 
-There is no long-lived `main`. The **default branch** is always the current active track
-(`track/15` right now). `git clone` and `sdkcraft pack` / `sdkcraft try` land here directly.
-When the next upstream major ships, roll the default branch forward to the new `track/*`
-(see below).
-
-## Release automation
-
-```
-upstream releases v15.x.y on GitHub
-         │
-         ▼
-Renovate (scheduled on the default branch, Mon–Fri 04:00 UTC)
-  reads VERSION on track/15, detects newer 15.x release
-  opens PR: VERSION 15.7.3 → 15.x.y
-         │
-         ▼
-build.yml  (PR check — triggers on PRs targeting track/15)
-  runs sdkcraft build inside the sdkcraft-actions reusable workflow
-         │  passes → Renovate auto-merges (automerge: true)
-         ▼
-upload.yml  (push to track/15)
-  builds + uploads to the Workshop store at risk: edge, channel: 15
-```
-
-Key config points:
-Key config points:
-- `renovate.json` on the default branch (`track/15`) sets `baseBranchPatterns: ["track/15"]`
-  and `allowedVersions: "/^15\\./"`  — Renovate targets only the right branch and never
-  proposes a major-version bump across the track boundary.
-- `automerge: true` / `automergeType: "pr"` — Renovate merges automatically once
-  all required checks pass. **Requires branch protection on `track/*` with the `build`
-  status check set as required** (see below), otherwise Renovate may merge before CI runs.
-
-## Branch protection
-
-In GitHub Settings → Branches, there is one rule with pattern `track/*`:
-
-- Require status checks to pass before merging → add `build`
-- (The check name won't appear in the autocomplete until the workflow has run at least
-  once. Either type `build` manually, or open a throwaway PR against `track/15` first.)
-
-This single rule covers every current and future `track/*` branch automatically.
+Summary: each `track/<N>` branch maps to store channel `<N>/edge`. Renovate
+promotes minor/patch releases automatically; a major-version rollover is a
+deliberate operator action (see **Bootstrapping** below).
 
 ## Local development
 
