@@ -19,9 +19,13 @@ VERSION                Current upstream version (single line, e.g. 15.7.4)
 renovate.json          Renovate config — watches can1357/oh-my-pi github-releases
 .github/workflows/
   build.yml            PR check: builds on PRs targeting track/15
-  upload.yml           Release: builds + uploads to 15/edge on push to track/15
+  upload.yml           Release: 3-job pipeline (snapshot → build+upload → promote)
+                       uploads to 15/edge, then cascades old revisions down the belt
   renovate.yml         Renovate bot schedule (main branch only)
   renovate-check.yml   Validates renovate.json on PRs (main branch only)
+.github/scripts/
+  promote-pipeline.sh  Snapshot/promote/channel-revs helpers; $SDKCRAFT injectable
+  promote-pipeline.test.sh  Bash test harness for the promotion script
 ```
 
 ## Upstream
@@ -36,7 +40,8 @@ renovate.json          Renovate config — watches can1357/oh-my-pi github-relea
 ## Key design facts
 
 - **Multi-base**: `ubuntu@22.04:amd64` + `ubuntu@24.04:amd64` (no `build-base` field)
-- **Track**: `15/edge` — branch `track/15`, one branch per upstream major under `track/*`
+- **Track**: `15/edge` — branch `track/15`, one branch per upstream major under `track/*`;
+  track number derived at runtime from the major in `VERSION` (not hardcoded in upload.yml)
 - **Persistence**: single mount plug `omp-home` → `/home/workshop/.omp`
   All omp state (agent.db, history.db, sessions/, memories/, plugins/, python-env/) lives there
 - **No network service**: omp is a CLI tool; no tunnel slot needed
@@ -51,10 +56,10 @@ renovate.json          Renovate config — watches can1357/oh-my-pi github-relea
 To bootstrap a new major-version branch (e.g., `track/16` when upstream goes to 16.x):
 1. `git checkout -b track/16 track/15`
 2. Update `VERSION` to the first 16.x release
-3. Update `build.yml` and `upload.yml`: branch `"track/15"` → `"track/16"`
-4. Update `renovate.json`: `"track/15"` → `"track/16"`, `allowedVersions: "/^16\\./"` 
-5. `git commit -m "chore: configure 16/edge track" && git push -u origin track/16`
-6. `gh api repos/<owner>/omp-workshop-sdk -X PATCH -f default_branch='track/16'`
+3. Update `build.yml` and `renovate.json`: branch `"track/15"` → `"track/16"`,
+   `allowedVersions: "/^16\\./"` (`upload.yml` needs no branch edit — track is derived from `VERSION`)
+4. `git commit -m "chore: configure 16/edge track" && git push -u origin track/16`
+5. `gh api repos/<owner>/omp-workshop-sdk -X PATCH -f default_branch='track/16'`
 
 ## Iterate locally
 

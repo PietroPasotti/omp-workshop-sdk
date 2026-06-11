@@ -113,6 +113,93 @@ Branch protection for `track/16` is covered automatically by the existing
 
 See `DEVELOPERS.md` for the full step-by-step commands.
 
+## Amendment: release-promotion conveyor (2026-06-11)
+
+Status: Accepted
+
+### Context
+
+The original pipeline releases every new revision only to `<N>/edge`. The store
+supports a stable promotion ladder (`edge → beta → candidate → stable`), but no
+automation advanced revisions through it. Additionally, the reusable upload
+workflow (`canonical/sdkcraft-actions`) derives the store track from
+`GITHUB_REF` (`track/15/edge`) when no `track:` input is supplied; the channel
+validator rejects this string because `15` is not a valid risk name.
+
+### Decision
+
+**Fix the track derivation:** derive the track from the major component of
+`VERSION` (`cut -d. -f1 VERSION`) and pass it explicitly as `track:` to the
+upload job. `VERSION` is already the single source of truth; no new hardcoded
+value is introduced.
+
+**Add a promotion conveyor:** restructure `upload.yml` into three sequential
+jobs:
+
+```
+snapshot        — record which revisions sit in edge/beta/candidate BEFORE upload
+build-and-upload — build + release two new revisions to <N>/edge (existing logic)
+promote         — shift the pre-upload revisions one tier down the belt:
+                    candidate → <N>/stable AND latest/stable
+                    beta      → <N>/candidate
+                    edge      → <N>/beta
+```
+
+The conveyor logic lives in `.github/scripts/promote-pipeline.sh` (injectable
+`$SDKCRAFT` for testing) with subcommands `snapshot`, `promote`, and
+`channel-revs` (pure parser for test isolation).
+
+Values flow from `snapshot` to `promote` via GitHub Actions job outputs
+referenced through env vars (not inline `${{ }}` expressions) to prevent shell
+injection. The existing `concurrency` group serialises pipelines per branch, so
+the read-then-shift sequence is race-free within a track.
+
+### Channel parsing
+
+`sdkcraft revisions` emits a whitespace-aligned table with columns
+`CHANNEL REVISION ARCHITECTURE UPLOADED`, where `CHANNEL` may be a
+comma-joined list (no spaces) when a revision appears in multiple channels
+(e.g. `15/candidate,15/stable`). The parser:
+
+- skips the header and any craft-cli noise by requiring column 2 to be an
+  integer (`$2 ~ /^[0-9]+$/`);
+- splits the channel cell on `,` and compares each token exactly to the
+  target — `15/edge` does not match `115/edge` or `5/edge`.
+
+`sdkcraft revisions` failure is retried (3 attempts) and then treated as an
+empty belt, so the first-ever release and transient outages are no-ops rather
+than corruption events.
+
+### Edge cases
+
+- **Empty belt tiers**: empty revision lists are no-ops for that tier.
+- **Two revisions per channel** (one per base): both are promoted.
+- **Re-running `promote`**: idempotent — uses the captured snapshot.
+- **Pre-existing wrongly-named revisions** (e.g. uploaded under `track/15/edge`
+  before this fix): not found under `15/edge`, so not promoted. The belt
+  rebuilds cleanly from the next real release.
+
+### Consequences
+
+**Positive:**
+
+- Store channels `<N>/beta`, `<N>/candidate`, `<N>/stable`, and `latest/stable`
+  are populated automatically without human intervention.
+- The track derivation bug is fixed; the store will no longer reject the channel
+  name on upload.
+- The promotion script is fully testable locally with a mock `sdkcraft` binary.
+
+**Negative / trade-offs:**
+
+- Each release now requires three jobs instead of one; end-to-end wall time
+  increases by one extra `snap install sdkcraft` + store API round-trip.
+- `latest/stable` reflects whichever active track finished last if multiple
+  tracks release concurrently — acceptable because Renovate pushes only to the
+  single default branch.
+- Store tracks (`<N>` and `latest`) and the `latest/stable` guardrail must exist
+  in the store before the first promotion; this is a one-time operator action
+  outside this repository.
+
 ## Consequences
 
 **Positive:**

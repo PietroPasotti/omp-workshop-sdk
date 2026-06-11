@@ -16,11 +16,88 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # 1. snapshot — record which revisions are in each channel BEFORE the upload
+  #    so promote can shift them one tier down after the upload succeeds.
+  # ---------------------------------------------------------------------------
+  snapshot:
+    runs-on: ubuntu-latest
+    outputs:
+      track:     ${{ steps.meta.outputs.track }}
+      name:      ${{ steps.meta.outputs.name }}
+      edge:      ${{ steps.snap.outputs.edge }}
+      beta:      ${{ steps.snap.outputs.beta }}
+      candidate: ${{ steps.snap.outputs.candidate }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive track and SDK name
+        id: meta
+        run: |
+          echo "track=$(cut -d. -f1 VERSION)" >> "$GITHUB_OUTPUT"
+          echo "name=$(awk -F': *' '$1=="name"{print $2;exit}' sdkcraft.yaml)" >> "$GITHUB_OUTPUT"
+
+      - name: Install sdkcraft
+        run: |
+          for attempt in 1 2 3; do
+            sudo snap install sdkcraft --edge --classic && break
+            [ "$attempt" -lt 3 ] && sleep $((attempt * 5))
+          done
+
+      - name: Snapshot channel state
+        id: snap
+        env:
+          SDKCRAFT_STORE_CREDENTIALS: ${{ secrets.SDKCRAFT_STORE_CREDENTIALS_STAGING }}
+          NAME: ${{ steps.meta.outputs.name }}
+          TRACK: ${{ steps.meta.outputs.track }}
+        run: |
+          bash .github/scripts/promote-pipeline.sh snapshot "$NAME" "$TRACK"
+
+  # ---------------------------------------------------------------------------
+  # 2. build-and-upload — build both platforms and release to <N>/edge.
+  #    Runs after snapshot so the pre-upload state is already captured.
+  #    track is passed explicitly (derived from VERSION) to avoid the
+  #    branch-name pitfall where GITHUB_REF would produce "track/15/edge".
+  # ---------------------------------------------------------------------------
   build-and-upload:
+    needs: snapshot
     uses: canonical/sdkcraft-actions/.github/workflows/upload.yml@main
     with:
       platforms: '["ubuntu@22.04:amd64","ubuntu@24.04:amd64"]'
       platform-flag: "--platform"
       risk: "edge"
+      track: ${{ needs.snapshot.outputs.track }}
     secrets:
       SDKCRAFT_STORE_CREDENTIALS: ${{ secrets.SDKCRAFT_STORE_CREDENTIALS_STAGING }}
+
+  # ---------------------------------------------------------------------------
+  # 3. promote — only runs when build-and-upload succeeds; cascades the
+  #    pre-upload revisions one risk level down the belt:
+  #      candidate -> <N>/stable AND latest/stable
+  #      beta      -> <N>/candidate
+  #      edge      -> <N>/beta
+  # ---------------------------------------------------------------------------
+  promote:
+    needs: [snapshot, build-and-upload]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install sdkcraft
+        run: |
+          for attempt in 1 2 3; do
+            sudo snap install sdkcraft --edge --classic && break
+            [ "$attempt" -lt 3 ] && sleep $((attempt * 5))
+          done
+
+      - name: Promote revisions along the belt
+        env:
+          SDKCRAFT_STORE_CREDENTIALS: ${{ secrets.SDKCRAFT_STORE_CREDENTIALS_STAGING }}
+          NAME:      ${{ needs.snapshot.outputs.name }}
+          TRACK:     ${{ needs.snapshot.outputs.track }}
+          EDGE:      ${{ needs.snapshot.outputs.edge }}
+          BETA:      ${{ needs.snapshot.outputs.beta }}
+          CANDIDATE: ${{ needs.snapshot.outputs.candidate }}
+        run: |
+          bash .github/scripts/promote-pipeline.sh promote \
+            "$NAME" "$TRACK" "$EDGE" "$BETA" "$CANDIDATE"
