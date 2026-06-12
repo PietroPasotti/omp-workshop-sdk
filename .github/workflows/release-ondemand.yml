@@ -1,0 +1,178 @@
+name: Release on demand
+
+# Manual harness that exercises the full release path (snapshot -> build ->
+# upload -> promote) without waiting on Renovate or a push to track/<N>.
+#
+# It mirrors the jobs of `upload.yml` but inlines the build/upload step so the
+# upload can be skipped in dry-run mode (the reusable upload workflow always
+# uploads), and exposes a `runner` input so the same workflow runs on
+# GitHub-hosted runners (a runner-less fork) or the self-hosted production
+# fleet.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: >-
+          release = REAL upload to <N>/edge + promote (MUTATES the staging store);
+          dry-run = build only, print the would-be upload/promote and attach the
+          .sdk artifacts (no store writes; snapshot/promote may still READ revisions).
+        type: choice
+        options:
+          - release
+          - dry-run
+        default: release
+      runner:
+        description: >-
+          JSON array of runner labels. Default ["ubuntu-latest"] runs on
+          GitHub-hosted runners (works in a runner-less fork; LXD container build,
+          no KVM). Pass ["self-hosted","linux","jammy","x64","xlarge"] for
+          production parity.
+        type: string
+        default: '["ubuntu-latest"]'
+
+# Serialise dispatches so a real release is never interrupted mid-flight or
+# raced against another run touching the same store track.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. snapshot — record the pre-upload channel state (read-only). Track and
+  #    SDK name are derived from VERSION / sdkcraft.yaml, exactly as upload.yml.
+  # ---------------------------------------------------------------------------
+  snapshot:
+    runs-on: ubuntu-latest
+    outputs:
+      track:     ${{ steps.meta.outputs.track }}
+      name:      ${{ steps.meta.outputs.name }}
+      edge:      ${{ steps.snap.outputs.edge }}
+      beta:      ${{ steps.snap.outputs.beta }}
+      candidate: ${{ steps.snap.outputs.candidate }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Derive track and SDK name
+        id: meta
+        run: |
+          echo "track=$(cut -d. -f1 VERSION)" >> "$GITHUB_OUTPUT"
+          echo "name=$(awk -F': *' '$1=="name"{print $2;exit}' sdkcraft.yaml)" >> "$GITHUB_OUTPUT"
+
+      - name: Install sdkcraft
+        run: |
+          for attempt in 1 2 3; do
+            sudo snap install sdkcraft --edge --classic && break
+            [ "$attempt" -lt 3 ] && sleep $((attempt * 5))
+          done
+
+      - name: Snapshot channel state
+        id: snap
+        env:
+          SDKCRAFT_STORE_CREDENTIALS: ${{ secrets.SDKCRAFT_STORE_CREDENTIALS_STAGING }}
+          NAME:  ${{ steps.meta.outputs.name }}
+          TRACK: ${{ steps.meta.outputs.track }}
+        run: |
+          bash .github/scripts/promote-pipeline.sh snapshot "$NAME" "$TRACK"
+
+  # ---------------------------------------------------------------------------
+  # 2. build-and-upload — build each platform with LXD (container build, works
+  #    GitHub-hosted), then either upload to <N>/edge (release) or print the
+  #    would-be upload and attach the .sdk as an artifact (dry-run).
+  # ---------------------------------------------------------------------------
+  build-and-upload:
+    needs: snapshot
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: "ubuntu@22.04:amd64"
+            id: "ubuntu-22.04-amd64"
+          - platform: "ubuntu@24.04:amd64"
+            id: "ubuntu-24.04-amd64"
+    steps:
+      - name: Install LXD
+        uses: canonical/setup-lxd@v1
+        with:
+          channel: 6/stable
+
+      - uses: actions/checkout@v6
+
+      - name: Install sdkcraft
+        run: |
+          for attempt in 1 2 3; do
+            sudo snap install sdkcraft --edge --classic && break
+            [ "$attempt" -lt 3 ] && sleep $((attempt * 5))
+          done
+
+      - name: Pack SDK for ${{ matrix.platform }}
+        env:
+          MATRIX_PLATFORM: ${{ matrix.platform }}
+        run: |
+          sdkcraft --verbose pack --platform "$MATRIX_PLATFORM"
+
+      - name: Upload SDK to ${{ needs.snapshot.outputs.track }}/edge (or preview)
+        env:
+          MODE:  ${{ inputs.mode }}
+          TRACK: ${{ needs.snapshot.outputs.track }}
+          SDKCRAFT_STORE_CREDENTIALS: ${{ secrets.SDKCRAFT_STORE_CREDENTIALS_STAGING }}
+        run: |
+          shopt -s nullglob
+          sdks=(*.sdk)
+          if [ ${#sdks[@]} -eq 0 ]; then
+            echo "ERROR: 'sdkcraft pack' produced no .sdk file" >&2
+            exit 1
+          fi
+          for sdk in "${sdks[@]}"; do
+            if [ "$MODE" = "dry-run" ]; then
+              echo "DRY-RUN: would run: sdkcraft upload $sdk --release ${TRACK}/edge"
+              continue
+            fi
+            ok=0
+            for attempt in 1 2 3; do
+              if sdkcraft --verbose upload "$sdk" --release "${TRACK}/edge"; then ok=1; break; fi
+              [ "$attempt" -lt 3 ] && sleep $((attempt * 30))
+            done
+            [ "$ok" = 1 ] || { echo "ERROR: upload of $sdk failed after 3 attempts" >&2; exit 1; }
+          done
+
+      - name: Attach built SDK as artifact (dry-run)
+        if: inputs.mode == 'dry-run'
+        uses: actions/upload-artifact@v7
+        with:
+          name: sdk-${{ matrix.id }}
+          path: "*.sdk"
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # 3. promote — cascade the pre-upload revisions one tier down the belt. In
+  #    dry-run mode DRY_RUN=1 makes promote-pipeline.sh print the would-be
+  #    `sdkcraft release` calls instead of writing to the store.
+  # ---------------------------------------------------------------------------
+  promote:
+    needs: [snapshot, build-and-upload]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install sdkcraft
+        run: |
+          for attempt in 1 2 3; do
+            sudo snap install sdkcraft --edge --classic && break
+            [ "$attempt" -lt 3 ] && sleep $((attempt * 5))
+          done
+
+      - name: Promote revisions along the belt
+        env:
+          DRY_RUN: ${{ inputs.mode == 'dry-run' && '1' || '' }}
+          SDKCRAFT_STORE_CREDENTIALS: ${{ secrets.SDKCRAFT_STORE_CREDENTIALS_STAGING }}
+          NAME:      ${{ needs.snapshot.outputs.name }}
+          TRACK:     ${{ needs.snapshot.outputs.track }}
+          EDGE:      ${{ needs.snapshot.outputs.edge }}
+          BETA:      ${{ needs.snapshot.outputs.beta }}
+          CANDIDATE: ${{ needs.snapshot.outputs.candidate }}
+        run: |
+          bash .github/scripts/promote-pipeline.sh promote \
+            "$NAME" "$TRACK" "$EDGE" "$BETA" "$CANDIDATE"
