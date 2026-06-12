@@ -8,6 +8,9 @@
 #
 # Environment:
 #   SDKCRAFT   override the sdkcraft binary (test injection point; default: sdkcraft)
+#   DRY_RUN    when set (non-empty), `_release` prints the would-be sdkcraft
+#              release command and skips the store write (snapshot/parse are
+#              read-only and unaffected)
 #
 # Revision order:
 #   candidate -> TRACK/stable,latest/stable
@@ -69,9 +72,14 @@ _revisions() {
 # ---------------------------------------------------------------------------
 # _release NAME REVISION CHANNELS
 #   Run `sdkcraft release`, retrying up to 3 times on failure.
+#   When DRY_RUN is set, print the would-be command and skip the store write.
 # ---------------------------------------------------------------------------
 _release() {
     local name="$1" rev="$2" channels="$3" attempt
+    if [[ -n "${DRY_RUN:-}" ]]; then
+        echo "DRY-RUN: would run: $SDKCRAFT release $name $rev $channels"
+        return 0
+    fi
     for attempt in 1 2 3; do
         if "$SDKCRAFT" release "$name" "$rev" "$channels"; then
             return 0

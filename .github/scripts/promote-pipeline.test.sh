@@ -8,6 +8,8 @@
 #   3. partial belt: edge + beta populated; beta->candidate and edge->beta only
 #   4. full belt: two bases, token traps, multi-channel cell; exact release set;
 #      no spurious calls from decoys 115/edge and 5/edge
+#   5. dry-run: DRY_RUN=1 over the full belt prints the would-be release plan
+#      (one line per revision) and records zero store writes
 #
 # Run: bash .github/scripts/promote-pipeline.test.sh
 
@@ -224,6 +226,24 @@ assert_not_contains "full: decoy rev 20 not released" " 20 " "$calls"
 assert_not_contains "full: decoy rev 1 not released"  " 1 "  "$calls"
 
 assert_eq "full: exactly 6 release calls" "6" "$(count_lines "$calls")"
+
+# ---------------------------------------------------------------------------
+# Scenario E: dry-run — full belt, no store writes
+#   DRY_RUN=1 must print the would-be release plan and call sdkcraft zero times.
+# ---------------------------------------------------------------------------
+printf '\n=== promote: dry-run (DRY_RUN=1) — full belt, zero store writes ===\n'
+: > "$WORKDIR/calls.txt"
+dry_out=$(DRY_RUN=1 bash "$PIPELINE" promote "omp" "15" "8 7" "6 5" "4 3")
+dry_calls=$(cat "$WORKDIR/calls.txt")
+
+assert_eq       "dry-run: zero release calls recorded" "" "$dry_calls"
+assert_contains "dry-run: cand 4 → 15/stable,latest/stable plan" "DRY-RUN: would run: $MOCK_SDKCRAFT release omp 4 15/stable,latest/stable" "$dry_out"
+assert_contains "dry-run: cand 3 → 15/stable,latest/stable plan" "DRY-RUN: would run: $MOCK_SDKCRAFT release omp 3 15/stable,latest/stable" "$dry_out"
+assert_contains "dry-run: beta 6 → 15/candidate plan"            "DRY-RUN: would run: $MOCK_SDKCRAFT release omp 6 15/candidate"             "$dry_out"
+assert_contains "dry-run: beta 5 → 15/candidate plan"            "DRY-RUN: would run: $MOCK_SDKCRAFT release omp 5 15/candidate"             "$dry_out"
+assert_contains "dry-run: edge 8 → 15/beta plan"                 "DRY-RUN: would run: $MOCK_SDKCRAFT release omp 8 15/beta"                  "$dry_out"
+assert_contains "dry-run: edge 7 → 15/beta plan"                 "DRY-RUN: would run: $MOCK_SDKCRAFT release omp 7 15/beta"                  "$dry_out"
+assert_eq       "dry-run: exactly 6 plan lines"                  "6" "$(count_lines "$dry_out")"
 
 # ---------------------------------------------------------------------------
 # Summary
