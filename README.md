@@ -18,7 +18,7 @@ name: my-project
 base: ubuntu@24.04
 sdks:
   - name: omp
-    channel: 14/edge
+    channel: 15/edge
 ```
 
 This gives you `omp` on your PATH inside the workshop immediately after
