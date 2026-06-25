@@ -6,8 +6,10 @@ an AI coding agent for the terminal.
 ## What this repo is
 
 A Workshop SDK repo. It produces an SDK that installs the `omp` binary and
-mounts `~/.omp/` from the host so config, sessions, Hindsight memory, and
-plugins survive workshop updates.
+mounts `/home/workshop/.omp` from a Workshop-managed private host directory
+(not the host's `~/.omp`) so config, sessions, Hindsight memory, and plugins
+survive workshop updates. Users can run `workshop remount` to point the mount
+at their real host `~/.omp` instead.
 
 ## Repo structure
 
@@ -43,7 +45,10 @@ renovate.json          Renovate config — watches can1357/oh-my-pi github-relea
 - **Track**: `15/edge` — branch `track/15`, one branch per upstream major under `track/*`;
   track number derived at runtime from the major in `VERSION` (not hardcoded in upload.yml)
 - **Persistence**: single mount plug `omp-home` → `/home/workshop/.omp`
-  All omp state (agent.db, history.db, sessions/, memories/, plugins/, python-env/) lives there
+  All omp state (agent.db, history.db, sessions/, memories/, plugins/, python-env/) lives there.
+  Host source is a private directory Workshop allocates under `$XDG_DATA_HOME` — an SDK cannot
+  mount an arbitrary host path. Users override with
+  `workshop remount <ws>/omp:omp-home ~/.omp` (stop workshop first).
 - **No network service**: omp is a CLI tool; no tunnel slot needed
 - **No GPU plug**: omp calls external AI APIs, no local GPU needed
 - **Binary is self-contained**: Bun `--compile` output; no system runtime deps required
