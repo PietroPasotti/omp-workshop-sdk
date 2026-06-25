@@ -33,8 +33,11 @@ This gives you `omp` on your PATH inside the workshop immediately after
 1. No prerequisite SDKs are required.
 2. No specific project layout is needed. `omp` operates in any directory.
 3. On launch, the SDK adds `omp` to `PATH` and installs bash completions.
-   Your `~/.omp/` directory (config, sessions, API keys, plugins, Hindsight
-   memory) is mounted from the host and survives workshop updates.
+   `/home/workshop/.omp` (config, sessions, API keys, plugins, Hindsight
+   memory) is backed by a Workshop-managed private host directory — it persists
+   across workshop stop/refresh and SDK updates, but it is **not** your existing
+   host `~/.omp`; a fresh workshop starts empty. See **Use your host's `~/.omp`**
+   below to opt in.
 
 ### Running the agent
 
@@ -64,7 +67,8 @@ workshop shell
 omp config set providers.anthropic.apiKey sk-ant-...
 ```
 
-All changes are persisted to the host through the `omp-home` mount.
+All changes are persisted to a Workshop-managed host directory through the
+`omp-home` mount and survive SDK updates.
 
 ### Shell completions
 
@@ -98,7 +102,30 @@ omp --version
 - Purpose: Persists all of omp's state — agent config and API keys
   (`~/.omp/agent/settings.yml`), session history (`history.db`), Hindsight
   memory (`memories/`), installed plugins (`plugins/`), and the Python eval
-  environment (`python-env/`) — across workshop updates.
+  environment (`python-env/`) — across workshop updates. The host source is a
+  private directory Workshop allocates under `$XDG_DATA_HOME` (not your existing
+  host `~/.omp`); a fresh workshop starts empty.
+
+### Use your host's `~/.omp`
+
+By default Workshop mounts a private host directory into `/home/workshop/.omp`.
+To use your real host `~/.omp` instead, run these commands **on the host**
+(the workshop must be stopped first because `~/.omp` is not empty):
+
+```bash
+workshop stop <workshop>
+workshop remount <workshop>/omp:omp-home ~/.omp
+workshop start <workshop>
+```
+
+The mount is read-write: omp will read and write your host `~/.omp` directly.
+
+To revert to the private Workshop-managed directory:
+
+```bash
+workshop disconnect <workshop>/omp:omp-home --forget
+workshop refresh <workshop>
+```
 
 ---
 

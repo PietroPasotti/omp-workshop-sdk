@@ -1,0 +1,12 @@
+name: dev
+base: ubuntu@24.04
+
+sdks:
+  - name: omp
+    channel: 14/edge
+  - name: gh-cli
+  - name: uv
+
+
+actions:
+  omp: omp
