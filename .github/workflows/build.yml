@@ -13,6 +13,4 @@ jobs:
   build:
     uses: canonical/sdkcraft-actions/.github/workflows/build.yml@main
     with:
-      runs-on: "ubuntu-latest"
-      platforms: '["ubuntu@22.04:amd64","ubuntu@24.04:amd64"]'
-      platform-flag: "--platform"
+      runs-on: '["ubuntu-latest"]'
