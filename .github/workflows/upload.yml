@@ -47,7 +47,7 @@ jobs:
       - name: Snapshot channel state
         id: snap
         env:
-          SDKCRAFT_STORE_CREDENTIALS: ${{ secrets.SDKCRAFT_STORE_CREDENTIALS_STAGING }}
+          SDKCRAFT_STORE_CREDENTIALS: ${{ secrets.SDKCRAFT_STORE_CREDENTIAL }}
           NAME: ${{ steps.meta.outputs.name }}
           TRACK: ${{ steps.meta.outputs.track }}
         run: |
@@ -68,7 +68,7 @@ jobs:
       risk: "edge"
       track: ${{ needs.snapshot.outputs.track }}
     secrets:
-      SDKCRAFT_STORE_CREDENTIALS: ${{ secrets.SDKCRAFT_STORE_CREDENTIALS_STAGING }}
+      SDKCRAFT_STORE_CREDENTIALS: ${{ secrets.SDKCRAFT_STORE_CREDENTIAL }}
 
   # ---------------------------------------------------------------------------
   # 3. promote — only runs when build-and-upload succeeds; cascades the
@@ -92,7 +92,7 @@ jobs:
 
       - name: Promote revisions along the belt
         env:
-          SDKCRAFT_STORE_CREDENTIALS: ${{ secrets.SDKCRAFT_STORE_CREDENTIALS_STAGING }}
+          SDKCRAFT_STORE_CREDENTIALS: ${{ secrets.SDKCRAFT_STORE_CREDENTIAL }}
           NAME:      ${{ needs.snapshot.outputs.name }}
           TRACK:     ${{ needs.snapshot.outputs.track }}
           EDGE:      ${{ needs.snapshot.outputs.edge }}
