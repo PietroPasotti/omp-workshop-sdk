@@ -13,12 +13,12 @@
       "extractVersionTemplate": "^v(?<version>.*)$"
     }
   ],
-  "baseBranchPatterns": ["track/15"],
+  "baseBranchPatterns": ["track/16"],
   "packageRules": [
     {
       "matchPackageNames": ["can1357/oh-my-pi"],
-      "matchBaseBranches": ["track/15"],
-      "allowedVersions": "/^15\\./",
+      "matchBaseBranches": ["track/16"],
+      "allowedVersions": "/^16\\./",
       "automerge": true,
       "automergeType": "pr"
     }
