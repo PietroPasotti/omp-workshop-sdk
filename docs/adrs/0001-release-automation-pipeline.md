@@ -91,12 +91,23 @@ The channel is never parameterised at runtime; it is encoded in `upload.yml`
 via the `risk: edge` field and the branch trigger. The major component of the
 channel is implicit in *which* `track/*` branch is the default.
 
-### 5. Branch protection enforces the gate
+### 5. A repository ruleset enforces the gate
 
-A single GitHub branch protection rule on the pattern `track/*` requires the
-`build` status check to pass before merging. This rule covers every current and
-future track branch automatically and is the mechanism that prevents Renovate
-from auto-merging a broken build.
+A single GitHub repository ruleset (`build-sdk-checks`, `target: branch`,
+`enforcement: active`) on the ref pattern `refs/heads/track/*` requires the
+`build / build` status check to pass before a matching branch can be updated.
+The required-check **context** must be the check-run name produced by the
+reusable workflow — `build / build` (the caller job id `build` joined to the
+reusable workflow's `build` job), **not** the workflow `name:` (`Build SDK`).
+The same ruleset also blocks branch deletion and non-fast-forward (force)
+pushes. The `refs/heads/track/*` pattern covers every current and future track
+branch automatically and is the mechanism that prevents Renovate from
+auto-merging a broken build.
+
+> Note: the pattern must be `refs/heads/track/*` (with the trailing `*`). A
+> bare `refs/heads/track/` matches no branch, leaving the track unprotected.
+> Verify with `gh api repos/<owner>/<repo>/rules/branches/track/<N>` — it must
+> list the `deletion`, `non_fast_forward`, and `required_status_checks` rules.
 
 ### 6. Major-version rollover is a manual operator action
 
@@ -108,8 +119,8 @@ When upstream releases a new major (e.g. `v16.0.0`):
    (`track/15` → `track/16`; `allowedVersions` major digit).
 4. Push and set `track/16` as the GitHub default branch.
 
-Branch protection for `track/16` is covered automatically by the existing
-`track/*` rule.
+The ruleset covers `track/16` automatically via the existing
+`refs/heads/track/*` pattern; no per-branch configuration is required.
 
 See `DEVELOPERS.md` for the full step-by-step commands.
 
@@ -210,7 +221,7 @@ than corruption events.
   on weekdays, with no human involvement.
 - `allowedVersions` in `renovate.json` makes it structurally impossible for
   Renovate to bridge a major-version boundary.
-- The `track/*` branch protection rule requires no maintenance as new tracks
+- The `refs/heads/track/*` ruleset requires no maintenance as new tracks
   are added.
 
 **Negative / trade-offs:**
@@ -220,10 +231,10 @@ than corruption events.
   could derive the major from the branch name at workflow runtime to eliminate
   this manual step.
 - Renovate uses `GITHUB_TOKEN` for authentication. PRs it opens will not
-  trigger other Actions workflows unless branch protection is configured with
-  the `build` check set as required and Renovate is allowed to merge (i.e. the
-  automerge mechanism operates through the GitHub API merge endpoint, not a
-  push event). If the `build` check is not marked required, Renovate may
-  auto-merge before CI runs.
+  trigger other Actions workflows unless the ruleset is configured with the
+  `build / build` check set as required and Renovate is allowed to merge (i.e.
+  the automerge mechanism operates through the GitHub API merge endpoint, not a
+  push event). If the `build / build` check is not marked required, Renovate
+  may auto-merge before CI runs.
 - Renovate only runs Mon–Fri. A weekend upstream release will not be promoted
   until the following Monday morning UTC.
