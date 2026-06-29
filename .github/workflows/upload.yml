@@ -63,6 +63,7 @@ jobs:
     needs: snapshot
     uses: canonical/sdkcraft-actions/.github/workflows/upload.yml@main
     with:
+      runs-on: '["ubuntu-latest"]'
       platforms: '["ubuntu@22.04:amd64","ubuntu@24.04:amd64"]'
       platform-flag: "--platform"
       risk: "edge"
