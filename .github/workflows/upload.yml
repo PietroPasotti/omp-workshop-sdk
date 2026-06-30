@@ -44,6 +44,12 @@ jobs:
             [ "$attempt" -lt 3 ] && sleep $((attempt * 5))
           done
 
+      - name: Verify store credentials
+        env:
+          SDKCRAFT_STORE_CREDENTIALS: ${{ secrets.SDKCRAFT_STORE_TOKEN }}
+        run: sdkcraft whoami
+
+
       - name: Snapshot channel state
         id: snap
         env:
