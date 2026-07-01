@@ -20,9 +20,9 @@ hooks/check-health     Verifies omp --version (runs as root)
 VERSION                Current upstream version (single line, e.g. 15.7.4)
 renovate.json          Renovate config — watches can1357/oh-my-pi github-releases
 .github/workflows/
-  build.yml            PR check: builds on PRs targeting track/15
+  build.yml            PR check: builds on PRs targeting track/16
   upload.yml           Release: 3-job pipeline (snapshot → build+upload → promote)
-                       uploads to 15/edge, then cascades old revisions down the belt
+                       uploads to 16/edge, then cascades old revisions down the belt
   renovate.yml         Renovate bot schedule (main branch only)
   renovate-check.yml   Validates renovate.json on PRs (main branch only)
 .github/scripts/
@@ -42,7 +42,7 @@ renovate.json          Renovate config — watches can1357/oh-my-pi github-relea
 ## Key design facts
 
 - **Multi-base**: `ubuntu@22.04:amd64` + `ubuntu@24.04:amd64` (no `build-base` field)
-- **Track**: `15/edge` — branch `track/15`, one branch per upstream major under `track/*`;
+- **Track**: `16/edge` — branch `track/16`, one branch per upstream major under `track/*`;
   track number derived at runtime from the major in `VERSION` (not hardcoded in upload.yml)
 - **Persistence**: single mount plug `omp-home` → `/home/workshop/.omp`
   All omp state (agent.db, history.db, sessions/, memories/, plugins/, python-env/) lives there.
@@ -55,16 +55,34 @@ renovate.json          Renovate config — watches can1357/oh-my-pi github-relea
 
 ## Branch/CI structure
 
-- `track/15`: default branch — has VERSION, all workflows (build, upload, Renovate)
-- No `main` branch; Renovate runs from the default branch
+- `track/16`: default branch — has VERSION, all workflows (build, upload, Renovate)
+- `track/15`: legacy 15.x maintenance branch — Renovate **does not** update it
+  (Renovate runs only from the default branch and reads `renovate.json` there)
+- No `main` branch; Renovate runs from the default branch on a weekday-04:00-UTC schedule
 
-To bootstrap a new major-version branch (e.g., `track/16` when upstream goes to 16.x):
-1. `git checkout -b track/16 track/15`
-2. Update `VERSION` to the first 16.x release
-3. Update `build.yml` and `renovate.json`: branch `"track/15"` → `"track/16"`,
-   `allowedVersions: "/^16\\./"` (`upload.yml` needs no branch edit — track is derived from `VERSION`)
-4. `git commit -m "chore: configure 16/edge track" && git push -u origin track/16`
-5. `gh api repos/<owner>/omp-workshop-sdk -X PATCH -f default_branch='track/16'`
+**First Renovate PR on a fresh repo or branch** may show `action_required` on the
+`Build SDK` check — click "Approve and run" once; subsequent Renovate PRs run automatically.
+
+To bootstrap a new major-version branch (e.g., `track/17` when upstream goes to 17.x):
+1. `git checkout -b track/17 track/16`
+2. Update `VERSION` to the first 17.x release
+3. Update `build.yml`: `branches: "track/16"` → `"track/17"`
+4. Update `upload.yml`: push trigger `branches: "track/16"` → `"track/17"`
+   (the track number in the pipeline is still derived at runtime from `VERSION`; only the
+   push trigger line changes)
+5. Update `renovate.json`: `baseBranchPatterns`, `matchBaseBranches` → `["track/17"]`;
+   `allowedVersions` → `"/^17\\./"`
+6. `git commit -m "chore: configure 17/edge track" && git push -u origin track/17`
+   Note: the `build-sdk-checks` ruleset (pattern `refs/heads/track/*`) blocks direct pushes
+   to new track branches. If the push is rejected with "required status check expected",
+   temporarily disable enforcement:
+   `gh api repos/<owner>/omp-workshop-sdk/rulesets/17107028 -X PATCH -f enforcement=disabled`
+   Push, then immediately re-enable:
+   `gh api repos/<owner>/omp-workshop-sdk/rulesets/17107028 -X PATCH -f enforcement=active`
+7. `gh api repos/<owner>/omp-workshop-sdk -X PATCH -f default_branch='track/17'`
+8. `sdkcraft create-track omp --track 17`
+   (required before the first upload — the release step fails silently if the store track
+   does not exist: the binary uploads but channel assignment is rejected)
 
 ## Iterate locally
 
