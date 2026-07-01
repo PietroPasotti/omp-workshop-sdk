@@ -55,7 +55,9 @@ renovate.json          Renovate config — watches can1357/oh-my-pi github-relea
 
 ## Branch/CI structure
 
-- `track/15`: default branch — has VERSION, all workflows (build, upload, Renovate)
+- `track/15`: legacy 15.x maintenance branch — `track/16` is now the default branch
+- Renovate **does not** run against `track/15` (Renovate runs only from the default branch);
+  15.x version bumps require a manual PR
 - No `main` branch; Renovate runs from the default branch
 
 To bootstrap a new major-version branch (e.g., `track/16` when upstream goes to 16.x):
