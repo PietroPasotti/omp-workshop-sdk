@@ -8,6 +8,7 @@ description: |
   connections out of the box. Configuration, sessions, memory (Hindsight),
   and plugins are persisted across workshop updates.
 license: MIT
+website: https://github.com/PietroPasotti/omp-workshop-sdk
 platforms:
   ubuntu@22.04:amd64:
   ubuntu@24.04:amd64:
