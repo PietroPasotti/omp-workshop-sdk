@@ -12,6 +12,12 @@ website: https://github.com/PietroPasotti/omp-workshop-sdk
 platforms:
   ubuntu@22.04:amd64:
   ubuntu@24.04:amd64:
+  ubuntu@22.04:arm64:
+    build-on: [ubuntu@22.04:amd64]
+    build-for: [ubuntu@22.04:arm64]
+  ubuntu@24.04:arm64:
+    build-on: [ubuntu@24.04:amd64]
+    build-for: [ubuntu@24.04:arm64]
 
 plugs:
   omp-home:
@@ -26,8 +32,13 @@ parts:
     override-pull: |
       VERSION=$(cat "$CRAFT_PROJECT_DIR/VERSION")
       craftctl set version="$VERSION"
-      curl -fLO "https://github.com/can1357/oh-my-pi/releases/download/v${VERSION}/omp-linux-x64"
-      mv omp-linux-x64 omp
+      case "$CRAFT_ARCH_BUILD_FOR" in
+        amd64) ASSET=omp-linux-x64 ;;
+        arm64) ASSET=omp-linux-arm64 ;;
+        *) echo "unsupported arch: $CRAFT_ARCH_BUILD_FOR" >&2; exit 1 ;;
+      esac
+      curl -fLO "https://github.com/can1357/oh-my-pi/releases/download/v${VERSION}/${ASSET}"
+      mv "$ASSET" omp
       chmod +x omp
     organize:
       omp: bin/omp
