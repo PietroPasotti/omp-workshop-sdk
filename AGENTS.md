@@ -35,13 +35,17 @@ renovate.json          Renovate config — watches can1357/oh-my-pi github-relea
 - Package: `@oh-my-pi/pi-coding-agent` on npm (npm version = GitHub release version)
 - GitHub: `https://github.com/can1357/oh-my-pi`
 - Releases: `https://github.com/can1357/oh-my-pi/releases`
-- Binary URL pattern: `https://github.com/can1357/oh-my-pi/releases/download/v{VERSION}/omp-linux-x64`
-  (raw binary, no archive)
+- Binary URL pattern:
+  `https://github.com/can1357/oh-my-pi/releases/download/v{VERSION}/omp-linux-{x64,arm64}`
+  (raw binary, no archive; `override-pull` picks the asset from `CRAFT_ARCH_BUILD_FOR`)
 - Version scheme: semver (e.g. 15.7.4); release tags are `v15.7.4`
 
 ## Key design facts
 
-- **Multi-base**: `ubuntu@22.04:amd64` + `ubuntu@24.04:amd64` (no `build-base` field)
+- **Multi-base + multi-arch**: `ubuntu@{22.04,24.04}:{amd64,arm64}` (no `build-base` field).
+  arm64 is cross-built on amd64 (`build-on` amd64 / `build-for` arm64); the `dump` part only
+  downloads a prebuilt binary, so no native arm64 runner or QEMU is needed. `upload.yml` builds
+  and uploads all four platforms on the amd64 runner.
 - **Track**: `16/edge` — branch `track/16`, one branch per upstream major under `track/*`;
   track number derived at runtime from the major in `VERSION` (not hardcoded in upload.yml)
 - **Persistence**: single mount plug `omp-home` → `/home/workshop/.omp`
