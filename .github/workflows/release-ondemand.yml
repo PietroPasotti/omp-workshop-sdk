@@ -91,6 +91,8 @@ jobs:
             id: "ubuntu-22.04-amd64"
           - platform: "ubuntu@24.04:amd64"
             id: "ubuntu-24.04-amd64"
+          - platform: "ubuntu@26.04:amd64"
+            id: "ubuntu-26.04-amd64"
     steps:
       - name: Install LXD
         uses: canonical/setup-lxd@v1
