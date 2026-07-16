@@ -7,8 +7,8 @@ rationale and design of the branch-to-track/channel mapping, Renovate
 automation, build/upload pipeline, and the ruleset that gates merges.
 
 Summary: each `track/<N>` branch maps to store channel `<N>/edge`. Renovate
-promotes minor/patch releases automatically; a major-version rollover is a
-deliberate operator action (see **Bootstrapping** below).
+promotes minor/patch releases automatically; major-version rollovers are handled
+by `bootstrap-major.yml` (see **Bootstrapping** below).
 
 On every push to a `track/<N>` branch the upload pipeline runs three jobs:
 
@@ -41,41 +41,43 @@ workshop info   # runs check-health
 
 ## Bootstrapping a new major version
 
-When upstream releases `v16.0.0` (or any `16.x`):
+Major-track creation is fully automated. `bootstrap-major.yml` runs daily at
+05:00 UTC from the default branch. When it detects that the latest upstream omp
+major exceeds the current default-branch major it:
 
-1. Create the new version branch from the current default:
-   ```bash
-   git checkout -b track/16 track/15
-   ```
+1. Creates `track/N` via the GitHub refs API (pointing at the current HEAD,
+   which already has passing build checks — no ruleset bypass needed).
+2. Opens a PR `setup/track-N → track/N` with VERSION and renovate.json updated
+   for the new major, with auto-merge enabled.
+3. Creates the `N` store track via `sdkcraft create-track omp --track N`.
+4. Changes the GitHub default branch to `track/N`.
+5. Polls for the PR to auto-merge (~15 min), then triggers `upload.yml` for
+   the first `N/edge` release.
 
-2. Set `VERSION` to the first 16.x release:
-   ```bash
-   echo "16.0.0" > VERSION
-   ```
+**Required secrets**: `SDKCRAFT_STORE_TOKEN` (store auth) and `ADMIN_TOKEN`
+(fine-grained PAT with Administration:write — used for the default-branch
+change; without it the workflow logs a warning and the caller must run
+`gh api repos/<owner>/omp-workshop-sdk -X PATCH -f default_branch=track/N`).
 
-3. Update branch references in `build.yml`, `upload.yml`, and `renovate.json`:
-   ```bash
-   # .github/workflows/build.yml   — pull_request branches: ["track/15"] → ["track/16"]
-   # .github/workflows/upload.yml  — push branches: ["track/15"] → ["track/16"]
-   #     (only the push trigger; the `track:` it uploads to is derived from VERSION)
-   # renovate.json — baseBranchPatterns, matchBaseBranches: "track/15" → "track/16"
-   #                 allowedVersions: "/^15\\./" → "/^16\\./"
-   ```
+**First Renovate PR on a new track**: GitHub may show `action_required` on the
+`Build SDK` check for the first PR opened by an automated actor on the new base
+branch. Click "Approve and run" once; subsequent PRs on that track auto-run.
 
-4. Commit and push:
-   ```bash
-   git add -A && git commit -m "chore: configure 16/edge track"
-   git push -u origin track/16
-   ```
+### Manual recovery (if bootstrap fails mid-run)
 
-5. Roll the GitHub default branch:
-   ```bash
-   gh api repos/<owner>/omp-workshop-sdk -X PATCH -f default_branch='track/16'
-   ```
+The workflow is idempotent — re-running it after the branch exists exits early.
+Individual steps, if missed, can be run manually:
 
-6. The `track/16` branch is gated automatically by the existing repository
-   ruleset (`build-sdk-checks`) on the `refs/heads/track/*` pattern; no
-   per-branch configuration is needed.
+```bash
+# Create store track (if missed):
+sdkcraft create-track omp --track N
+
+# Change default branch (if ADMIN_TOKEN was absent):
+gh api repos/<owner>/omp-workshop-sdk -X PATCH -f default_branch=track/N
+
+# Trigger first upload (if setup PR merged but upload was not triggered):
+gh workflow run upload.yml --ref track/N -f branch=track/N
+```
 
 ## On-demand release / dry-run
 
@@ -118,11 +120,15 @@ use the on-demand `dry-run` path there):
 - [ ] Self-hosted runners labelled `self-hosted,linux,jammy,x64,xlarge` (used by
       the reusable `build.yml`/`upload.yml`), **or** override their `runs-on`.
       Without runners the PR `build` check and `upload.yml` queue indefinitely.
+- [ ] Actions secret `ADMIN_TOKEN` set to a fine-grained PAT with
+      Administration:write on this repo. Used by `bootstrap-major.yml` to
+      change the default branch automatically; without it that step emits a
+      `::warning::` and requires a one-time manual command.
 - [ ] Actions secret `SDKCRAFT_STORE_CREDENTIALS_STAGING` set. Without it,
       `snapshot` silently treats the belt as empty and uploads/promotes fail
       auth. Confirm staging is the intended publish target.
-- [ ] Store tracks `<N>` and `latest`, plus the `latest/stable` guardrail,
-      already exist (one-time operator action, outside this repo).
+- [ ] Store track `latest` and the `latest/stable` guardrail exist. Per-major
+      store tracks (`<N>`) are created automatically by `bootstrap-major.yml`.
 - [ ] Repository ruleset on `refs/heads/track/*` requiring the `build / build`
       status check (verify: `gh api repos/<owner>/<repo>/rules/branches/track/<N>`).
 - [ ] "Allow GitHub Actions to create and approve pull requests" enabled
