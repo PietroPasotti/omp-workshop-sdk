@@ -1,24 +1,38 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended"],
-  "enabledManagers": ["custom.regex"],
+  "extends": [
+    "config:recommended"
+  ],
+  "enabledManagers": [
+    "custom.regex"
+  ],
   "customManagers": [
     {
       "customType": "regex",
-      "managerFilePatterns": ["/^VERSION$/"],
-      "matchStrings": ["(?<currentValue>[0-9.]+)"],
+      "managerFilePatterns": [
+        "/^VERSION$/"
+      ],
+      "matchStrings": [
+        "(?<currentValue>[0-9.]+)"
+      ],
       "depNameTemplate": "can1357/oh-my-pi",
       "datasourceTemplate": "github-releases",
       "versioningTemplate": "semver",
       "extractVersionTemplate": "^v(?<version>.*)$"
     }
   ],
-  "baseBranchPatterns": ["track/16"],
+  "baseBranchPatterns": [
+    "track/17"
+  ],
   "packageRules": [
     {
-      "matchPackageNames": ["can1357/oh-my-pi"],
-      "matchBaseBranches": ["track/16"],
-      "allowedVersions": "/^16\\./",
+      "matchPackageNames": [
+        "can1357/oh-my-pi"
+      ],
+      "matchBaseBranches": [
+        "track/17"
+      ],
+      "allowedVersions": "/^17\\./",
       "automerge": true,
       "automergeType": "pr"
     }
