@@ -1,0 +1,149 @@
+name: Bootstrap Major Track
+
+# Runs daily and on demand. Detects when the latest upstream omp major exceeds
+# the current default-branch track number, then creates the new track branch,
+# updates the four versioned files, creates the SDK store track, changes the
+# default branch, and triggers the initial upload — fully unattended.
+on:
+  schedule:
+    - cron: "0 5 * * *"   # 05:00 UTC daily
+  workflow_dispatch:
+
+permissions:
+  contents: write        # push new branch, commit
+  actions: write         # trigger workflow_dispatch
+  administration: write  # manage rulesets + change default branch
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Detect version gap
+        id: detect
+        run: |
+          set -euo pipefail
+
+          # Highest major version published by upstream (any release, not just "Latest")
+          LATEST_MAJOR=$(gh release list --repo can1357/oh-my-pi --limit 100 \
+            --json tagName --jq \
+            '[.[].tagName | select(test("^v[0-9]+\\.")) | ltrimstr("v") |
+             split(".")[0] | tonumber] | max | tostring')
+
+          # Default branch carries the current track number
+          DEFAULT_BRANCH=$(gh repo view \
+            --json defaultBranchRef --jq '.defaultBranchRef.name')
+          CURRENT_MAJOR=$(echo "$DEFAULT_BRANCH" | cut -d/ -f2)
+
+          # Most-recent release within the new major (releases are newest-first)
+          LATEST_VERSION=$(gh release list --repo can1357/oh-my-pi --limit 100 \
+            --json tagName,prerelease \
+            --jq "[.[] | select(.prerelease==false) |
+                  select(.tagName | startswith(\"v${LATEST_MAJOR}.\")) |
+                  .tagName | ltrimstr(\"v\")] | .[0]")
+
+          echo "latest_major=$LATEST_MAJOR"   >> "$GITHUB_OUTPUT"
+          echo "latest_version=$LATEST_VERSION" >> "$GITHUB_OUTPUT"
+          echo "current_major=$CURRENT_MAJOR" >> "$GITHUB_OUTPUT"
+
+          if [ "$LATEST_MAJOR" -gt "$CURRENT_MAJOR" ]; then
+            echo "needs_bootstrap=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_bootstrap=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bootstrap track/${{ steps.detect.outputs.latest_major }}
+        if: steps.detect.outputs.needs_bootstrap == 'true'
+        env:
+          OLD_MAJOR: ${{ steps.detect.outputs.current_major }}
+          NEW_MAJOR: ${{ steps.detect.outputs.latest_major }}
+          NEW_VERSION: ${{ steps.detect.outputs.latest_version }}
+          SDKCRAFT_STORE_CREDENTIALS: ${{ secrets.SDKCRAFT_STORE_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # ── Guard: skip if branch already exists (idempotent re-runs) ──────
+          if git ls-remote --exit-code origin "track/${NEW_MAJOR}" \
+              > /dev/null 2>&1; then
+            echo "Branch track/${NEW_MAJOR} already exists — nothing to do."
+            exit 0
+          fi
+
+          # ── Git identity ─────────────────────────────────────────────────
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name  "github-actions[bot]"
+
+          git checkout -b "track/${NEW_MAJOR}"
+
+          # ── VERSION ─────────────────────────────────────────────────────
+          echo "$NEW_VERSION" > VERSION
+
+          # ── build.yml and upload.yml: replace push-trigger branch ────────
+          # Both files have exactly one line of the form:
+          #   - "track/<N>"
+          # under the branches key. Replace OLD_MAJOR with NEW_MAJOR.
+          sed -i "s|- \"track/${OLD_MAJOR}\"|- \"track/${NEW_MAJOR}\"|" \
+            .github/workflows/build.yml \
+            .github/workflows/upload.yml
+
+          # ── renovate.json: baseBranchPatterns, matchBaseBranches, allowedVersions
+          # The allowedVersions string in the parsed JSON is /^<N>\./ (the JSON
+          # encoding doubles the backslash to /^<N>\\./). jq --arg passes the
+          # decoded value, so we write the single-backslash form here.
+          jq --arg old "track/${OLD_MAJOR}" \
+             --arg new "track/${NEW_MAJOR}" \
+             --arg oldv "/^${OLD_MAJOR}\./" \
+             --arg newv "/^${NEW_MAJOR}\./" \
+            '.baseBranchPatterns |=
+               map(if . == $old then $new else . end) |
+             .packageRules |= map(
+               .matchBaseBranches |=
+                 map(if . == $old then $new else . end) |
+               if .allowedVersions == $oldv
+                 then .allowedVersions = $newv
+                 else .
+               end
+             )' renovate.json > renovate.json.tmp \
+            && mv renovate.json.tmp renovate.json
+
+          git add VERSION \
+            .github/workflows/build.yml \
+            .github/workflows/upload.yml \
+            renovate.json
+          git commit -m "chore: configure ${NEW_MAJOR}/edge track [skip ci]"
+          # [skip ci] prevents upload.yml from firing before the store track exists.
+
+          # ── Temporarily disable branch-protection ruleset ─────────────────
+          RULESET_ID=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/rulesets" --jq '.[0].id')
+          gh api "repos/${GITHUB_REPOSITORY}/rulesets/${RULESET_ID}" \
+            -X PATCH -f enforcement=disabled
+
+          # ── Push new branch ───────────────────────────────────────────────
+          git push origin "track/${NEW_MAJOR}"
+
+          # ── Re-enable branch protection immediately ───────────────────────
+          gh api "repos/${GITHUB_REPOSITORY}/rulesets/${RULESET_ID}" \
+            -X PATCH -f enforcement=active
+
+          # ── Install sdkcraft ──────────────────────────────────────────────
+          for attempt in 1 2 3; do
+            sudo snap install sdkcraft --edge --classic && break
+            [ "$attempt" -lt 3 ] && sleep $((attempt * 5))
+          done
+
+          # ── Create store track (required before first upload) ─────────────
+          sdkcraft create-track omp --track "${NEW_MAJOR}"
+
+          # ── Change default branch (Renovate reads config from default branch)
+          gh api "repos/${GITHUB_REPOSITORY}" \
+            -X PATCH -f "default_branch=track/${NEW_MAJOR}"
+
+          # ── Trigger initial upload for the new track ──────────────────────
+          # upload.yml derives track from VERSION, so --ref is sufficient.
+          gh workflow run upload.yml --ref "track/${NEW_MAJOR}"
