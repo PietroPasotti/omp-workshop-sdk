@@ -41,8 +41,8 @@ jobs:
 
           # Most-recent release within the new major (releases are newest-first)
           LATEST_VERSION=$(gh release list --repo can1357/oh-my-pi --limit 100 \
-            --json tagName,prerelease \
-            --jq "[.[] | select(.prerelease==false) |
+            --json tagName,isPrerelease \
+            --jq "[.[] | select(.isPrerelease==false) |
                   select(.tagName | startswith(\"v${LATEST_MAJOR}.\")) |
                   .tagName | ltrimstr(\"v\")] | .[0]")
 
