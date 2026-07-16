@@ -12,7 +12,6 @@ on:
 permissions:
   contents: write        # push new branch, commit
   actions: write         # trigger workflow_dispatch
-  administration: write  # manage rulesets + change default branch
 
 jobs:
   bootstrap:
