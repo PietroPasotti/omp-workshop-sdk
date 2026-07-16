@@ -109,20 +109,26 @@ auto-merging a broken build.
 > Verify with `gh api repos/<owner>/<repo>/rules/branches/track/<N>` — it must
 > list the `deletion`, `non_fast_forward`, and `required_status_checks` rules.
 
-### 6. Major-version rollover is a manual operator action
+### 6. Major-version rollover is automated
 
-When upstream releases a new major (e.g. `v16.0.0`):
+`bootstrap-major.yml` runs daily at 05:00 UTC from the default branch and on
+`workflow_dispatch`. It queries the upstream GitHub releases, compares the
+highest published major against the default-branch track number, and — when a
+gap is found — performs the full rollover unattended:
 
-1. `git checkout -b track/16 track/15`
-2. Set `VERSION` to the first `16.x` release.
-3. Update branch references in `build.yml`, `upload.yml`, and `renovate.json`
-   (`track/15` → `track/16`; `allowedVersions` major digit).
-4. Push and set `track/16` as the GitHub default branch.
+1. Creates `track/N` via the Git Refs API, pointing at the current HEAD commit
+   (already verified by CI). No ruleset disable/re-enable is required.
+2. Pushes VERSION and renovate.json changes to `setup/track-N` (unprotected)
+   and opens a PR to `track/N` with auto-merge enabled.
+3. Creates the store track via `sdkcraft create-track omp --track N`.
+4. Changes the GitHub default branch to `track/N` (requires the `ADMIN_TOKEN`
+   secret; if absent the step warns and the caller does it manually).
+5. Polls for the PR to auto-merge, then triggers the first `upload.yml` run.
 
-The ruleset covers `track/16` automatically via the existing
-`refs/heads/track/*` pattern; no per-branch configuration is required.
+`build.yml` and `upload.yml` use `branches: ["track/*"]` so they apply to every
+current and future track branch with no per-track edits.
 
-See `DEVELOPERS.md` for the full step-by-step commands.
+The workflow is idempotent: if `track/N` already exists it exits cleanly.
 
 ## Amendment: release-promotion conveyor (2026-06-11)
 
@@ -226,10 +232,10 @@ than corruption events.
 
 **Negative / trade-offs:**
 
-- Bootstrapping a new major track requires editing branch references in three
-  files (`build.yml`, `upload.yml`, `renovate.json`). A future improvement
-  could derive the major from the branch name at workflow runtime to eliminate
-  this manual step.
+- Bootstrapping a new major track is automated by `bootstrap-major.yml`
+  (see Amendment: automated major-track bootstrap, below). The `build.yml`
+  and `upload.yml` branch filters now use `track/*` so no per-track file
+  edits are needed at rollover time.
 - Renovate uses `GITHUB_TOKEN` for authentication. PRs it opens will not
   trigger other Actions workflows unless the ruleset is configured with the
   `build / build` check set as required and Renovate is allowed to merge (i.e.
@@ -238,3 +244,45 @@ than corruption events.
   may auto-merge before CI runs.
 - Renovate only runs Mon–Fri. A weekend upstream release will not be promoted
   until the following Monday morning UTC.
+
+## Amendment: automated major-track bootstrap (2026-07-16)
+
+Status: Accepted
+
+### Context
+
+The original design treated major-version rollovers as deliberate manual
+operator actions (ADR section 6). In practice this created a window where
+upstream published a new major but no SDK track existed. A scheduled workflow
+that detects and closes this gap automatically was added.
+
+### Decision
+
+Add `bootstrap-major.yml` (daily 05:00 UTC, `workflow_dispatch`). When the
+highest upstream major exceeds the current default-branch major it runs the
+full rollover unattended (branch creation, store track, default-branch change,
+first upload). See section 6 above for the step-by-step.
+
+Change `build.yml` and `upload.yml` branch patterns from the hard-coded
+`track/<N>` to `track/*`. This eliminates the need to edit either file at
+rollover time and ensures the build check and upload trigger work on new track
+branches immediately.
+
+### Consequences
+
+**Positive:**
+
+- New major tracks go live without human involvement (except a one-time
+  "Approve and run" click for the first Renovate PR on the new track).
+- No more per-track edits to `build.yml` or `upload.yml`.
+
+**Negative / trade-offs:**
+
+- The `build` check now fires for PRs targeting any `track/*` branch,
+  including legacy branches. In practice only the active track receives PRs.
+- The `ADMIN_TOKEN` secret (fine-grained PAT with Administration:write) is
+  required for the automatic default-branch change; without it that step
+  degrades to a warning rather than a hard failure.
+- `GITHUB_TOKEN`-initiated merges do not trigger further workflows (GitHub
+  recursion protection), so the bootstrap polls for the PR merge and then
+  fires `upload.yml` explicitly.

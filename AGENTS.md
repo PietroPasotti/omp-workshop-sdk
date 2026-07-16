@@ -17,14 +17,15 @@ at their real host `~/.omp` instead.
 sdkcraft.yaml          SDK definition (parts, plugs)
 hooks/setup-base       Adds $SDK/bin to PATH; installs bash completions (runs as root)
 hooks/check-health     Verifies omp --version (runs as root)
-VERSION                Current upstream version (single line, e.g. 15.7.4)
+VERSION                Current upstream version (single line, e.g. 17.0.1)
 renovate.json          Renovate config — watches can1357/oh-my-pi github-releases
 .github/workflows/
-  build.yml            PR check: builds on PRs targeting track/16
+  bootstrap-major.yml  Daily: detects upstream major bumps, creates the new track
+  build.yml            PR check: builds on PRs targeting any track/* branch
   upload.yml           Release: 3-job pipeline (snapshot → build+upload → promote)
-                       uploads to 16/edge, then cascades old revisions down the belt
-  renovate.yml         Renovate bot schedule (main branch only)
-  renovate-check.yml   Validates renovate.json on PRs (main branch only)
+                       uploads to N/edge, then cascades old revisions down the belt
+  renovate.yml         Renovate bot schedule (runs from the default branch)
+  renovate-check.yml   Validates renovate.json on PRs
 .github/scripts/
   promote-pipeline.sh  Snapshot/promote/channel-revs helpers; $SDKCRAFT injectable
   promote-pipeline.test.sh  Bash test harness for the promotion script
@@ -38,7 +39,7 @@ renovate.json          Renovate config — watches can1357/oh-my-pi github-relea
 - Binary URL pattern:
   `https://github.com/can1357/oh-my-pi/releases/download/v{VERSION}/omp-linux-{x64,arm64}`
   (raw binary, no archive; `override-pull` picks the asset from `CRAFT_ARCH_BUILD_FOR`)
-- Version scheme: semver (e.g. 15.7.4); release tags are `v15.7.4`
+- Version scheme: semver (e.g. 17.0.1); release tags are `v17.0.1`
 
 ## Key design facts
 
@@ -46,8 +47,8 @@ renovate.json          Renovate config — watches can1357/oh-my-pi github-relea
   arm64 is cross-built on amd64 (`build-on` amd64 / `build-for` arm64); the `dump` part only
   downloads a prebuilt binary, so no native arm64 runner or QEMU is needed. `upload.yml` builds
   and uploads all four platforms on the amd64 runner.
-- **Track**: `16/edge` — branch `track/16`, one branch per upstream major under `track/*`;
-  track number derived at runtime from the major in `VERSION` (not hardcoded in upload.yml)
+- **Track**: one `track/<N>` branch per upstream major; the current default is `track/17`
+  (`17/edge`). Track number derived at runtime from the major in `VERSION`.
 - **Persistence**: single mount plug `omp-home` → `/home/workshop/.omp`
   All omp state (agent.db, history.db, sessions/, memories/, plugins/, python-env/) lives there.
   Host source is a private directory Workshop allocates under `$XDG_DATA_HOME` — an SDK cannot
@@ -59,34 +60,19 @@ renovate.json          Renovate config — watches can1357/oh-my-pi github-relea
 
 ## Branch/CI structure
 
-- `track/16`: default branch — has VERSION, all workflows (build, upload, Renovate)
-- `track/15`: legacy 15.x maintenance branch — Renovate **does not** update it
-  (Renovate runs only from the default branch and reads `renovate.json` there)
+- `track/17`: current default branch — VERSION, all workflows, Renovate
+- `track/16`: legacy 16.x branch — receives no further Renovate updates
 - No `main` branch; Renovate runs from the default branch on a weekday-04:00-UTC schedule
 
-**First Renovate PR on a fresh repo or branch** may show `action_required` on the
-`Build SDK` check — click "Approve and run" once; subsequent Renovate PRs run automatically.
+**First Renovate PR on a new track** may show `action_required` on the `Build SDK`
+check — click "Approve and run" once; subsequent PRs on that track auto-run.
 
-To bootstrap a new major-version branch (e.g., `track/17` when upstream goes to 17.x):
-1. `git checkout -b track/17 track/16`
-2. Update `VERSION` to the first 17.x release
-3. Update `build.yml`: `branches: "track/16"` → `"track/17"`
-4. Update `upload.yml`: push trigger `branches: "track/16"` → `"track/17"`
-   (the track number in the pipeline is still derived at runtime from `VERSION`; only the
-   push trigger line changes)
-5. Update `renovate.json`: `baseBranchPatterns`, `matchBaseBranches` → `["track/17"]`;
-   `allowedVersions` → `"/^17\\./"`
-6. `git commit -m "chore: configure 17/edge track" && git push -u origin track/17`
-   Note: the `build-sdk-checks` ruleset (pattern `refs/heads/track/*`) blocks direct pushes
-   to new track branches. If the push is rejected with "required status check expected",
-   temporarily disable enforcement:
-   `gh api repos/<owner>/omp-workshop-sdk/rulesets/17107028 -X PATCH -f enforcement=disabled`
-   Push, then immediately re-enable:
-   `gh api repos/<owner>/omp-workshop-sdk/rulesets/17107028 -X PATCH -f enforcement=active`
-7. `gh api repos/<owner>/omp-workshop-sdk -X PATCH -f default_branch='track/17'`
-8. `sdkcraft create-track omp --track 17`
-   (required before the first upload — the release step fails silently if the store track
-   does not exist: the binary uploads but channel assignment is rejected)
+**Major-track bootstrapping is fully automated** by `bootstrap-major.yml` (daily 05:00 UTC).
+When upstream exceeds the current default-branch major it creates `track/N`, updates
+`renovate.json`, creates the store track, changes the default branch, and triggers the first
+upload. Required secrets: `SDKCRAFT_STORE_TOKEN` (store auth) and `ADMIN_TOKEN` (fine-grained
+PAT with Administration:write — used for the default-branch change; without it that step logs a
+warning and the default branch must be changed manually once).
 
 ## Iterate locally
 
