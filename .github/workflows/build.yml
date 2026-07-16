@@ -3,7 +3,7 @@ name: Build SDK
 on:
   pull_request:
     branches:
-      - "track/16"
+      - "track/*"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref || github.run_id }}

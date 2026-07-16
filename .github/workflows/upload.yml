@@ -3,7 +3,7 @@ name: Build and Upload SDK
 on:
   push:
     branches:
-      - "track/16"
+      - "track/*"
   workflow_dispatch:
     inputs:
       branch:
