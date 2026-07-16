@@ -2,16 +2,18 @@ name: Bootstrap Major Track
 
 # Runs daily and on demand. Detects when the latest upstream omp major exceeds
 # the current default-branch track number, then creates the new track branch,
-# updates the four versioned files, creates the SDK store track, changes the
-# default branch, and triggers the initial upload — fully unattended.
+# updates the versioned files, creates the SDK store track, changes the
+# default branch, and opens a PR that auto-merges to trigger the first
+# upload — fully unattended.
 on:
   schedule:
     - cron: "0 5 * * *"   # 05:00 UTC daily
   workflow_dispatch:
 
 permissions:
-  contents: write        # push new branch, commit
-  actions: write         # trigger workflow_dispatch
+  contents: write        # push setup branch, create refs
+  pull-requests: write   # create PR, enable auto-merge
+  actions: write         # trigger workflow_dispatch (reserved for future use)
 
 jobs:
   bootstrap:
@@ -39,16 +41,16 @@ jobs:
             --json defaultBranchRef --jq '.defaultBranchRef.name')
           CURRENT_MAJOR=$(echo "$DEFAULT_BRANCH" | cut -d/ -f2)
 
-          # Most-recent release within the new major (releases are newest-first)
+          # Most-recent stable release within the new major (releases are newest-first)
           LATEST_VERSION=$(gh release list --repo can1357/oh-my-pi --limit 100 \
             --json tagName,isPrerelease \
             --jq "[.[] | select(.isPrerelease==false) |
                   select(.tagName | startswith(\"v${LATEST_MAJOR}.\")) |
                   .tagName | ltrimstr(\"v\")] | .[0]")
 
-          echo "latest_major=$LATEST_MAJOR"   >> "$GITHUB_OUTPUT"
+          echo "latest_major=$LATEST_MAJOR"     >> "$GITHUB_OUTPUT"
           echo "latest_version=$LATEST_VERSION" >> "$GITHUB_OUTPUT"
-          echo "current_major=$CURRENT_MAJOR" >> "$GITHUB_OUTPUT"
+          echo "current_major=$CURRENT_MAJOR"   >> "$GITHUB_OUTPUT"
 
           if [ "$LATEST_MAJOR" -gt "$CURRENT_MAJOR" ]; then
             echo "needs_bootstrap=true"  >> "$GITHUB_OUTPUT"
@@ -77,18 +79,21 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name  "github-actions[bot]"
 
-          git checkout -b "track/${NEW_MAJOR}"
+          # ── Create track/N branch via refs API ───────────────────────────
+          # Pointing at the current HEAD (already has passing build checks)
+          # bypasses the required_status_checks ruleset restriction on branch
+          # creation. No ruleset disable/re-enable needed.
+          TRACK_SHA=$(git rev-parse HEAD)
+          gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -X POST \
+            -f ref="refs/heads/track/${NEW_MAJOR}" \
+            -f sha="${TRACK_SHA}"
+
+          # ── Create local setup branch for the config changes ─────────────
+          git checkout -b "setup/track-${NEW_MAJOR}"
 
           # ── VERSION ─────────────────────────────────────────────────────
           echo "$NEW_VERSION" > VERSION
-
-          # ── build.yml and upload.yml: replace push-trigger branch ────────
-          # Both files have exactly one line of the form:
-          #   - "track/<N>"
-          # under the branches key. Replace OLD_MAJOR with NEW_MAJOR.
-          sed -i "s|- \"track/${OLD_MAJOR}\"|- \"track/${NEW_MAJOR}\"|" \
-            .github/workflows/build.yml \
-            .github/workflows/upload.yml
 
           # ── renovate.json: baseBranchPatterns, matchBaseBranches, allowedVersions
           # The allowedVersions string in the parsed JSON is /^<N>\./ (the JSON
@@ -110,25 +115,23 @@ jobs:
              )' renovate.json > renovate.json.tmp \
             && mv renovate.json.tmp renovate.json
 
-          git add VERSION \
-            .github/workflows/build.yml \
-            .github/workflows/upload.yml \
-            renovate.json
-          git commit -m "chore: configure ${NEW_MAJOR}/edge track [skip ci]"
-          # [skip ci] prevents upload.yml from firing before the store track exists.
+          git add VERSION renovate.json
+          git commit -m "chore: configure ${NEW_MAJOR}/edge track"
 
-          # ── Temporarily disable branch-protection ruleset ─────────────────
-          RULESET_ID=$(gh api \
-            "repos/${GITHUB_REPOSITORY}/rulesets" --jq '.[0].id')
-          gh api "repos/${GITHUB_REPOSITORY}/rulesets/${RULESET_ID}" \
-            -X PATCH -f enforcement=disabled
+          # ── Push setup branch (not track/*, no ruleset restriction) ──────
+          git push origin "setup/track-${NEW_MAJOR}"
 
-          # ── Push new branch ───────────────────────────────────────────────
-          git push origin "track/${NEW_MAJOR}"
+          # ── Open PR: setup/track-N → track/N with auto-merge ─────────────
+          # build.yml uses branches: ["track/*"] so it fires on this PR.
+          # upload.yml uses push: branches: ["track/*"] so it fires on merge.
+          PR_URL=$(gh pr create \
+            --base  "track/${NEW_MAJOR}" \
+            --head  "setup/track-${NEW_MAJOR}" \
+            --title "chore: configure ${NEW_MAJOR}/edge track" \
+            --body  "Automated bootstrap: bumps VERSION to ${NEW_VERSION} and updates renovate.json for the ${NEW_MAJOR}/edge track.")
 
-          # ── Re-enable branch protection immediately ───────────────────────
-          gh api "repos/${GITHUB_REPOSITORY}/rulesets/${RULESET_ID}" \
-            -X PATCH -f enforcement=active
+          # Auto-merge + delete the setup branch once the build check passes
+          gh pr merge --auto --merge --delete-branch "${PR_URL}"
 
           # ── Install sdkcraft ──────────────────────────────────────────────
           for attempt in 1 2 3; do
@@ -137,12 +140,15 @@ jobs:
           done
 
           # ── Create store track (required before first upload) ─────────────
+          # Must happen before the PR auto-merges and triggers upload.yml.
           sdkcraft create-track omp --track "${NEW_MAJOR}"
 
           # ── Change default branch (Renovate reads config from default branch)
           gh api "repos/${GITHUB_REPOSITORY}" \
             -X PATCH -f "default_branch=track/${NEW_MAJOR}"
 
-          # ── Trigger initial upload for the new track ──────────────────────
-          # upload.yml derives track from VERSION, so --ref is sufficient.
-          gh workflow run upload.yml --ref "track/${NEW_MAJOR}"
+          echo ""
+          echo "Bootstrap PR: ${PR_URL}"
+          echo "Auto-merge is enabled. Once the build check passes the PR will"
+          echo "merge into track/${NEW_MAJOR} and upload.yml will trigger the"
+          echo "first upload to ${NEW_MAJOR}/edge automatically."
