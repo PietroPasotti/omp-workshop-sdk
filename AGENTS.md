@@ -64,8 +64,12 @@ renovate.json          Renovate config — watches can1357/oh-my-pi github-relea
 - `track/16`: legacy 16.x branch — receives no further Renovate updates
 - No `main` branch; Renovate runs from the default branch on a weekday-04:00-UTC schedule
 
-**First Renovate PR on a new track** may show `action_required` on the `Build SDK`
-check — click "Approve and run" once; subsequent PRs on that track auto-run.
+**Renovate auto-merge is unattended.** `renovate.yml` authors its PRs with `ADMIN_TOKEN`
+(a user-owned fine-grained PAT with Contents + Pull requests write), not `GITHUB_TOKEN`.
+This is required: commits made with `GITHUB_TOKEN` do not re-trigger the `pull_request`
+`Build SDK` workflow (GitHub's recursion guard parks it at `action_required`), so the
+required `build / build` check never posts and the PR stays `BLOCKED`. With the PAT the
+check runs normally and the `automerge: true` PR merges without a human clicking anything.
 
 **Major-track bootstrapping is fully automated** by `bootstrap-major.yml` (daily 05:00 UTC).
 When upstream exceeds the current default-branch major it creates `track/N`, updates
