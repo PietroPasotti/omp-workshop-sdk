@@ -22,7 +22,7 @@
     }
   ],
   "baseBranchPatterns": [
-    "track/17"
+    "track/18"
   ],
   "packageRules": [
     {
@@ -30,9 +30,9 @@
         "can1357/oh-my-pi"
       ],
       "matchBaseBranches": [
-        "track/17"
+        "track/18"
       ],
-      "allowedVersions": "/^17\\./",
+      "allowedVersions": "/^18\\./",
       "automerge": true,
       "automergeType": "pr"
     }
