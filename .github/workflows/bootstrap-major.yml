@@ -6,15 +6,21 @@ name: Bootstrap Major Track
 # default branch, and opens a PR that auto-merges to trigger the first
 # upload — fully unattended.
 #
+# Every side effect below is idempotent: a run that fails partway (e.g. an
+# expired store credential) leaves state that the NEXT run detects and
+# resumes from, instead of silently reporting "nothing to do" forever.
+#
 # Prerequisites:
 #   SDKCRAFT_STORE_TOKEN  — required; store authentication
-#   ADMIN_TOKEN           — optional; a fine-grained PAT with
-#                           Administration:write on this repo.
-#                           Only needed to change the default branch.
-#                           If absent the workflow logs a warning and the
-#                           caller must run:
-#                             gh api repos/OWNER/REPO -X PATCH \
-#                               -f default_branch=track/N
+#   ADMIN_TOKEN           — required; a fine-grained PAT with Contents +
+#                           Pull requests write, and Administration:write.
+#                           Commits authored with GITHUB_TOKEN don't
+#                           re-trigger the pull_request "Build SDK" workflow
+#                           (GitHub's recursion guard parks it at
+#                           action_required), so the required "build / build"
+#                           check never posts and auto-merge stays BLOCKED.
+#                           ADMIN_TOKEN is also used to flip the default
+#                           branch, which GITHUB_TOKEN cannot do.
 on:
   schedule:
     - cron: "0 5 * * *"   # 05:00 UTC daily (runs from the default branch)
@@ -33,7 +39,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-
+          token: ${{ secrets.ADMIN_TOKEN }}
       - name: Detect version gap
         id: detect
         run: |
@@ -74,129 +80,111 @@ jobs:
           NEW_MAJOR: ${{ steps.detect.outputs.latest_major }}
           NEW_VERSION: ${{ steps.detect.outputs.latest_version }}
           SDKCRAFT_STORE_CREDENTIALS: ${{ secrets.SDKCRAFT_STORE_TOKEN }}
-          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          GH_TOKEN: ${{ secrets.ADMIN_TOKEN }}
         run: |
           set -euo pipefail
 
-          # ── Guard: skip if branch already exists (idempotent re-runs) ──────
-          if git ls-remote --exit-code origin "track/${NEW_MAJOR}" \
-              > /dev/null 2>&1; then
-            echo "Branch track/${NEW_MAJOR} already exists — nothing to do."
-            exit 0
-          fi
-
-          # ── Git identity ─────────────────────────────────────────────────
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name  "github-actions[bot]"
 
-          # ── Create track/N branch via refs API ───────────────────────────
-          # Pointing at the current HEAD (which already has a passing build
-          # check) satisfies the required_status_checks ruleset rule for
-          # branch creation — no ruleset disable/re-enable needed.
-          TRACK_SHA=$(git rev-parse HEAD)
-          gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
-            -X POST \
-            -f ref="refs/heads/track/${NEW_MAJOR}" \
-            -f sha="${TRACK_SHA}"
+          # ── 1. track/N branch (idempotent) ──────────────────────────────
+          if git ls-remote --exit-code origin "refs/heads/track/${NEW_MAJOR}" \
+              > /dev/null 2>&1; then
+            echo "[1/4] track/${NEW_MAJOR} already exists."
+          else
+            TRACK_SHA=$(git rev-parse HEAD)
+            gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -X POST -f ref="refs/heads/track/${NEW_MAJOR}" -f sha="${TRACK_SHA}"
+            echo "[1/4] Created track/${NEW_MAJOR} at ${TRACK_SHA}."
+          fi
+          # Local remote-tracking ref for track/N isn't fetched by the initial
+          # checkout (only the default branch is); step 2 needs it whether the
+          # branch was just created above or already existed from a prior run.
+          git fetch origin \
+            "refs/heads/track/${NEW_MAJOR}:refs/remotes/origin/track/${NEW_MAJOR}"
 
-          # ── Create local setup branch for the config changes ─────────────
-          git checkout -b "setup/track-${NEW_MAJOR}"
+          # ── 2. Setup PR: bump VERSION + renovate.json (idempotent) ──────
+          # "Already merged" is detected from the VERSION file on track/N
+          # itself, not from local state — safe to re-run after any failure
+          # in a later stage without opening a duplicate PR.
+          REMOTE_VERSION=$(git show "origin/track/${NEW_MAJOR}:VERSION" 2>/dev/null || echo "")
+          OPEN_PR=$(gh pr list --head "setup/track-${NEW_MAJOR}" \
+            --base "track/${NEW_MAJOR}" --state open \
+            --json number --jq '.[0].number // empty')
+          if printf '%s' "$REMOTE_VERSION" | grep -q "^${NEW_MAJOR}\."; then
+            echo "[2/4] track/${NEW_MAJOR} VERSION already ${REMOTE_VERSION} — setup already merged."
+          elif [ -n "$OPEN_PR" ]; then
+            echo "[2/4] Setup PR #${OPEN_PR} already open — auto-merge will land it."
+          else
+            git checkout -B "setup/track-${NEW_MAJOR}" "origin/track/${NEW_MAJOR}"
 
-          # ── VERSION ─────────────────────────────────────────────────────
-          echo "$NEW_VERSION" > VERSION
+            # ── VERSION ─────────────────────────────────────────────────
+            echo "$NEW_VERSION" > VERSION
 
-          # ── renovate.json: baseBranchPatterns, matchBaseBranches, allowedVersions
-          # The allowedVersions string in the parsed JSON is /^<N>\./ (the JSON
-          # encoding doubles the backslash to /^<N>\\./). jq --arg passes the
-          # decoded value, so we write the single-backslash form here.
-          jq --arg old "track/${OLD_MAJOR}" \
-             --arg new "track/${NEW_MAJOR}" \
-             --arg oldv "/^${OLD_MAJOR}\./" \
-             --arg newv "/^${NEW_MAJOR}\./" \
-            '.baseBranchPatterns |=
-               map(if . == $old then $new else . end) |
-             .packageRules |= map(
-               .matchBaseBranches |=
+            # ── renovate.json: baseBranchPatterns, matchBaseBranches, allowedVersions
+            # The allowedVersions string in the parsed JSON is /^<N>\./ (the JSON
+            # encoding doubles the backslash to /^<N>\\./). jq --arg passes the
+            # decoded value, so we write the single-backslash form here.
+            jq --arg old "track/${OLD_MAJOR}" \
+               --arg new "track/${NEW_MAJOR}" \
+               --arg oldv "/^${OLD_MAJOR}\./" \
+               --arg newv "/^${NEW_MAJOR}\./" \
+              '.baseBranchPatterns |=
                  map(if . == $old then $new else . end) |
-               if .allowedVersions == $oldv
-                 then .allowedVersions = $newv
-                 else .
-               end
-             )' renovate.json > renovate.json.tmp \
-            && mv renovate.json.tmp renovate.json
+               .packageRules |= map(
+                 .matchBaseBranches |=
+                   map(if . == $old then $new else . end) |
+                 if .allowedVersions == $oldv
+                   then .allowedVersions = $newv
+                   else .
+                 end
+               )' renovate.json > renovate.json.tmp \
+              && mv renovate.json.tmp renovate.json
 
-          git add VERSION renovate.json
-          git commit -m "chore: configure ${NEW_MAJOR}/edge track"
+            git add VERSION renovate.json
+            git commit -m "chore: configure ${NEW_MAJOR}/edge track"
+            git push origin "setup/track-${NEW_MAJOR}"
 
-          # ── Push setup branch (not track/*, no ruleset restriction) ──────
-          git push origin "setup/track-${NEW_MAJOR}"
+            # build.yml uses branches: ["track/*"] so it fires on this PR.
+            # Merging (below) is done with ADMIN_TOKEN, a real user PAT, so
+            # unlike GITHUB_TOKEN it DOES trigger push-based workflows —
+            # upload.yml fires on its own once this lands, no manual
+            # poll-and-dispatch needed.
+            PR_URL=$(gh pr create \
+              --base  "track/${NEW_MAJOR}" \
+              --head  "setup/track-${NEW_MAJOR}" \
+              --title "chore: configure ${NEW_MAJOR}/edge track" \
+              --body  "Automated bootstrap: bumps VERSION to ${NEW_VERSION} and \
+            updates renovate.json for the ${NEW_MAJOR}/edge track.")
+            gh pr merge --auto --merge --delete-branch "${PR_URL}"
+            echo "[2/4] Opened ${PR_URL} with auto-merge enabled."
+          fi
 
-          # ── Open PR: setup/track-N → track/N with auto-merge ─────────────
-          # build.yml uses branches: ["track/*"] so it fires on this PR.
-          # upload.yml uses push: branches: ["track/*"] so it fires on merge,
-          # BUT GITHUB_TOKEN-initiated merges do NOT trigger further workflows;
-          # we therefore poll for the merge and trigger upload explicitly below.
-          PR_URL=$(gh pr create \
-            --base  "track/${NEW_MAJOR}" \
-            --head  "setup/track-${NEW_MAJOR}" \
-            --title "chore: configure ${NEW_MAJOR}/edge track" \
-            --body  "Automated bootstrap: bumps VERSION to ${NEW_VERSION} and \
-          updates renovate.json for the ${NEW_MAJOR}/edge track.")
-          PR_NUMBER=$(basename "${PR_URL}")
-
-          # Auto-merge + delete the setup branch once the build check passes
-          gh pr merge --auto --merge --delete-branch "${PR_URL}"
-
-          # ── Install sdkcraft ──────────────────────────────────────────────
+          # ── 3. Store track (idempotent: tolerate "already exists") ──────
           for attempt in 1 2 3; do
             sudo snap install sdkcraft --edge --classic && break
             [ "$attempt" -lt 3 ] && sleep $((attempt * 5))
           done
-
-          # ── Create store track (required before first upload) ─────────────
-          # Must happen before the PR auto-merges and triggers upload.yml.
-          sdkcraft create-track omp --track "${NEW_MAJOR}"
-
-          # ── Change default branch ──────────────────────────────────────────
-          # GITHUB_TOKEN lacks Administration:write — use ADMIN_TOKEN if set.
-          _admin_token="${ADMIN_TOKEN:-}"
-          if GH_TOKEN="${_admin_token:-$GH_TOKEN}" \
-              gh api "repos/${GITHUB_REPOSITORY}" \
-              -X PATCH -f "default_branch=track/${NEW_MAJOR}" \
-              2>/dev/null; then
-            echo "Default branch changed to track/${NEW_MAJOR}."
+          if OUTPUT=$(sdkcraft create-track omp --track "${NEW_MAJOR}" 2>&1); then
+            echo "$OUTPUT"
+            echo "[3/4] Store track ${NEW_MAJOR} ready."
+          elif printf '%s' "$OUTPUT" | grep -qi "already exist"; then
+            echo "[3/4] Store track ${NEW_MAJOR} already exists."
           else
-            echo "::warning::Could not change default branch automatically." \
-                 "Set the ADMIN_TOKEN secret (fine-grained PAT with" \
-                 "Administration:write), or run manually:"
-            echo "::warning::  gh api repos/${GITHUB_REPOSITORY} -X PATCH" \
-                 "-f default_branch=track/${NEW_MAJOR}"
+            echo "$OUTPUT" >&2
+            echo "::error::sdkcraft create-track failed — see log above." \
+                 "Steps 1-2 above already landed and won't be repeated;" \
+                 "the next scheduled run retries from here."
+            exit 1
           fi
 
-          # ── Wait for the setup PR to merge, then trigger upload ────────────
-          # GITHUB_TOKEN-initiated merges do not trigger further workflows.
-          # We poll here (up to 40 × 30 s = 20 min) and fire upload explicitly.
-          echo "Waiting for PR #${PR_NUMBER} to auto-merge..."
-          MERGED=false
-          for i in $(seq 1 40); do
-            STATE=$(gh pr view "${PR_NUMBER}" --json state --jq '.state')
-            if [ "$STATE" = "MERGED" ]; then
-              MERGED=true
-              break
-            fi
-            echo "  [${i}/40] PR state=${STATE} — waiting 30 s..."
-            sleep 30
-          done
-
-          if [ "$MERGED" = "true" ]; then
-            echo "PR merged. Triggering first upload to ${NEW_MAJOR}/edge..."
-            gh workflow run upload.yml \
-              --ref "track/${NEW_MAJOR}" \
-              -f branch="track/${NEW_MAJOR}"
-            echo "Upload queued for track/${NEW_MAJOR}."
+          # ── 4. Default branch (idempotent) ───────────────────────────────
+          CURRENT_DEFAULT=$(gh repo view --json defaultBranchRef \
+            --jq '.defaultBranchRef.name')
+          if [ "$CURRENT_DEFAULT" = "track/${NEW_MAJOR}" ]; then
+            echo "[4/4] Default branch already track/${NEW_MAJOR}."
           else
-            echo "::warning::PR #${PR_NUMBER} did not merge within 20 min." \
-                 "Trigger upload manually once the PR merges:"
-            echo "::warning::  gh workflow run upload.yml" \
-                 "--ref track/${NEW_MAJOR} -f branch=track/${NEW_MAJOR}"
+            gh api "repos/${GITHUB_REPOSITORY}" \
+              -X PATCH -f "default_branch=track/${NEW_MAJOR}"
+            echo "[4/4] Default branch changed to track/${NEW_MAJOR}."
           fi
