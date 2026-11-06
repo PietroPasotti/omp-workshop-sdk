@@ -27,6 +27,9 @@ plugs:
   omp-home:
     interface: mount
     workshop-target: /home/workshop/.omp
+  omp-skills:
+    interface: mount
+    workshop-target: /home/workshop/.agents/skills
 
 parts:
   omp:

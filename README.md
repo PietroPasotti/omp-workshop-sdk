@@ -34,9 +34,11 @@ This gives you `omp` on your PATH inside the workshop immediately after
 2. No specific project layout is needed. `omp` operates in any directory.
 3. On launch, the SDK adds `omp` to `PATH` and installs bash completions.
    `/home/workshop/.omp` (config, sessions, API keys, plugins, Hindsight
-   memory) is backed by a Workshop-managed private host directory — it persists
-   across workshop stop/refresh and SDK updates, but it is **not** your existing
-   host `~/.omp`; a fresh workshop starts empty. See **Use your host's `~/.omp`**
+   memory) and `/home/workshop/.agents/skills` (Agent Skills) are each backed
+   by a Workshop-managed private host directory — they persist across
+   workshop stop/refresh and SDK updates, but neither is your existing host
+   `~/.omp` or `~/.agents/skills`; a fresh workshop starts both empty. See
+   **Use your host's `~/.omp`** and **Use your host's `~/.agents/skills`**
    below to opt in.
 
 ### Running the agent
@@ -124,6 +126,38 @@ To revert to the private Workshop-managed directory:
 
 ```bash
 workshop disconnect <workshop>/omp:omp-home --forget
+workshop refresh <workshop>
+```
+
+### `omp-skills`
+
+- Interface: `mount`
+- Workshop target: `/home/workshop/.agents/skills`
+- Purpose: Persists Agent Skills (reusable instructions and scripts omp loads
+  from `~/.agents/skills`) across workshop updates. The host source is a
+  private directory Workshop allocates under `$XDG_DATA_HOME` (not your
+  existing host `~/.agents/skills`); a fresh workshop starts empty.
+
+### Use your host's `~/.agents/skills`
+
+By default Workshop mounts a private host directory into
+`/home/workshop/.agents/skills`. To use your real host `~/.agents/skills`
+instead, run these commands **on the host** (the workshop must be stopped
+first if `~/.agents/skills` is not empty):
+
+```bash
+workshop stop <workshop>
+workshop remount <workshop>/omp:omp-skills ~/.agents/skills
+workshop start <workshop>
+```
+
+The mount is read-write: omp will read and write your host `~/.agents/skills`
+directly.
+
+To revert to the private Workshop-managed directory:
+
+```bash
+workshop disconnect <workshop>/omp:omp-skills --forget
 workshop refresh <workshop>
 ```
 
