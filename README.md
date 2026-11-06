@@ -18,7 +18,7 @@ name: my-project
 base: ubuntu@24.04
 sdks:
   - name: omp
-    channel: 15/edge
+    channel: 18/stable
 ```
 
 This gives you `omp` on your PATH inside the workshop immediately after
@@ -70,6 +70,76 @@ omp config set providers.anthropic.apiKey sk-ant-...
 All changes are persisted to a Workshop-managed host directory through the
 `omp-home` mount and survive SDK updates.
 
+### Connect omp to a host `auth-gateway`
+
+omp supports routing provider requests through a host-side
+[`omp auth-gateway`](https://github.com/can1357/oh-my-pi/blob/main/docs/auth-broker-gateway.md)
+instead of holding provider credentials inside the workshop. The gateway is a
+forward-proxy (default `127.0.0.1:4000` on the host) that exposes
+OpenAI/Anthropic-compatible routes and resolves credentials from an
+`omp auth-broker` on your behalf; the workshop never sees the real provider
+token, only the gateway's own bearer token.
+
+This SDK ships two plugs for this:
+
+- `gateway` (`tunnel`) — bridges to the host port where `auth-gateway serve` listens.
+- `gateway-token` (`secret`) — the gateway's bearer token, fetched on demand.
+
+**1. On the host**, start the gateway (and a broker, if you don't already run one):
+
+```bash
+omp auth-broker serve &
+OMP_AUTH_BROKER_URL=http://127.0.0.1:8765 omp auth-gateway serve &
+omp auth-gateway token   # prints the bearer token
+```
+
+**2. In your workshop definition**, add a matching `system` slot for each plug
+and store the gateway token in your host keyring:
+
+```bash
+secret-tool store --label="omp gateway token" service omp-gateway
+```
+
+```yaml
+sdks:
+  - name: omp
+    channel: 18/stable
+  - name: system
+    slots:
+      gateway:
+        interface: tunnel
+        endpoint: localhost:4000   # host port auth-gateway listens on
+      gateway-token:
+        interface: secret
+        attributes:
+          service: omp-gateway
+```
+
+**3. Connect both plugs** (neither auto-connects — a host-service tunnel and
+every `secret` plug require a manual connect):
+
+```bash
+workshop refresh
+workshop connect <workshop>/omp:gateway <workshop>/system:gateway
+workshop connect <workshop>/omp:gateway-token <workshop>/system:gateway-token
+```
+
+**4. Point a provider at the gateway** in `~/.omp/agent/models.yml`, using
+omp's own `!<command>` config indirection to fetch the token at read time
+instead of writing it to disk:
+
+```yaml
+providers:
+  anthropic:
+    baseUrl: http://localhost:4000
+    apiKey: "!workshopctl get-secret omp.gateway-token"
+    api: anthropic-messages
+```
+
+If the secret plug is disconnected, `workshopctl get-secret` fails and omp
+falls back to its normal local credential resolution — the workshop stays
+healthy either way.
+
 ### Shell completions
 
 Bash completions are installed automatically. For other shells:
@@ -105,6 +175,23 @@ omp --version
   environment (`python-env/`) — across workshop updates. The host source is a
   private directory Workshop allocates under `$XDG_DATA_HOME` (not your existing
   host `~/.omp`); a fresh workshop starts empty.
+
+### `gateway`
+
+- Interface: `tunnel`
+- Endpoint: `localhost:4000`
+- Purpose: Bridges to a host-side `omp auth-gateway serve` listener so omp can
+  route provider requests through it instead of holding credentials directly.
+  Not auto-connected — pair it with a `system` tunnel slot and
+  `workshop connect`. See **Connect omp to a host `auth-gateway`** above.
+
+### `gateway-token`
+
+- Interface: `secret`
+- Purpose: The `auth-gateway`'s bearer token, fetched on demand with
+  `workshopctl get-secret omp.gateway-token`. Never auto-connected and never
+  written to disk by this SDK. See **Connect omp to a host `auth-gateway`**
+  above.
 
 ### Use your host's `~/.omp`
 
