@@ -4,6 +4,6 @@ sdks:
   - name: try-omp
   - name: system
     slots:
-      gateway:
+      omp-gateway:
         interface: tunnel
         endpoint: localhost:4000

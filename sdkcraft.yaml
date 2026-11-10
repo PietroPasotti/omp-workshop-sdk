@@ -27,10 +27,10 @@ plugs:
   omp-home:
     interface: mount
     workshop-target: /home/workshop/.omp
-  gateway:
+  omp-gateway:
     interface: tunnel
     endpoint: localhost:4000
-  gateway-token:
+  omp-gateway-token:
     interface: secret
 
 parts:

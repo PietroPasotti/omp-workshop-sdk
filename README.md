@@ -80,17 +80,30 @@ OpenAI/Anthropic-compatible routes and resolves credentials from an
 `omp auth-broker` on your behalf; the workshop never sees the real provider
 token, only the gateway's own bearer token.
 
-This SDK ships two plugs for this:
-
-- `gateway` (`tunnel`) — bridges to the host port where `auth-gateway serve` listens.
-- `gateway-token` (`secret`) — the gateway's bearer token, fetched on demand.
-
-**1. On the host**, start the gateway (and a broker, if you don't already run one):
+The [`omp-auth-gateway`](https://snapcraft.io/omp-auth-gateway) snap runs
+both as confined, auto-starting services, so this is mostly host setup, not
+code:
 
 ```bash
-omp auth-broker serve &
-OMP_AUTH_BROKER_URL=http://127.0.0.1:8765 omp auth-gateway serve &
-omp auth-gateway token   # prints the bearer token
+sudo snap install omp-auth-gateway
+```
+
+This installs and enables `gateway-daemon` (`omp auth-gateway serve`, on
+`127.0.0.1:4000`) and `broker-daemon` (`omp auth-broker serve`, on
+`127.0.0.1:8765`), already wired to each other.
+
+This SDK ships two plugs for this:
+
+- `omp-gateway` (`tunnel`) — bridges to the host port where `auth-gateway serve` listens.
+- `omp-gateway-token` (`secret`) — the gateway's bearer token, fetched on demand.
+
+**1. On the host**, add a provider credential to the broker and fetch the
+gateway's bearer token:
+
+```bash
+sudo snap alias omp-auth-gateway.broker omp-auth-broker   # one-time
+sudo omp-auth-broker login anthropic
+sudo omp-auth-gateway token   # prints the bearer token
 ```
 
 **2. In your workshop definition**, add a matching `system` slot for each plug
@@ -106,10 +119,10 @@ sdks:
     channel: 18/stable
   - name: system
     slots:
-      gateway:
+      omp-gateway:
         interface: tunnel
         endpoint: localhost:4000   # host port auth-gateway listens on
-      gateway-token:
+      omp-gateway-token:
         interface: secret
         attributes:
           service: omp-gateway
@@ -120,8 +133,8 @@ every `secret` plug require a manual connect):
 
 ```bash
 workshop refresh
-workshop connect <workshop>/omp:gateway <workshop>/system:gateway
-workshop connect <workshop>/omp:gateway-token <workshop>/system:gateway-token
+workshop connect <workshop>/omp:omp-gateway <workshop>/system:omp-gateway
+workshop connect <workshop>/omp:omp-gateway-token <workshop>/system:omp-gateway-token
 ```
 
 **4. Point a provider at the gateway** in `~/.omp/agent/models.yml`, using
@@ -132,9 +145,18 @@ instead of writing it to disk:
 providers:
   anthropic:
     baseUrl: http://localhost:4000
-    apiKey: "!workshopctl get-secret omp.gateway-token"
+    apiKey: "!workshopctl get-secret omp.omp-gateway-token"
     api: anthropic-messages
 ```
+
+The `baseUrl` shape depends on the route's wire format: `anthropic-messages`
+takes the gateway root (`http://localhost:4000`, matching `api.anthropic.com`'s
+own convention), while `openai-completions`/`openai-responses` need the
+`/v1` suffix (`http://localhost:4000/v1`, matching `api.openai.com/v1`) —
+the gateway always serves at `/v1/messages` / `/v1/chat/completions` /
+`/v1/responses` regardless. Repeat the block (new `providers.<id>` key,
+matching `api:` and `baseUrl` shape) for every provider you want routed
+through the gateway instead of a locally-held key.
 
 If the secret plug is disconnected, `workshopctl get-secret` fails and omp
 falls back to its normal local credential resolution — the workshop stays
@@ -176,7 +198,7 @@ omp --version
   private directory Workshop allocates under `$XDG_DATA_HOME` (not your existing
   host `~/.omp`); a fresh workshop starts empty.
 
-### `gateway`
+### `omp-gateway`
 
 - Interface: `tunnel`
 - Endpoint: `localhost:4000`
@@ -185,13 +207,13 @@ omp --version
   Not auto-connected — pair it with a `system` tunnel slot and
   `workshop connect`. See **Connect omp to a host `auth-gateway`** above.
 
-### `gateway-token`
+### `omp-gateway-token`
 
 - Interface: `secret`
 - Purpose: The `auth-gateway`'s bearer token, fetched on demand with
-  `workshopctl get-secret omp.gateway-token`. Never auto-connected and never
-  written to disk by this SDK. See **Connect omp to a host `auth-gateway`**
-  above.
+  `workshopctl get-secret omp.omp-gateway-token`. Never auto-connected and
+  never written to disk by this SDK. See **Connect omp to a host
+  `auth-gateway`** above.
 
 ### Use your host's `~/.omp`
 

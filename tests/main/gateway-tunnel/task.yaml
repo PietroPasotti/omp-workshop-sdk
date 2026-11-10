@@ -7,7 +7,7 @@ prepare: |
   python3 -m http.server 4000 --bind 127.0.0.1 >/dev/null 2>&1 &
   echo $! >listener.pid
   workshop launch
-  workshop connect test-omp-gateway/omp:gateway test-omp-gateway/system:gateway
+  workshop connect test-omp-gateway/omp:omp-gateway test-omp-gateway/system:omp-gateway
 
 restore: |
   workshop remove test-omp-gateway || true
@@ -25,7 +25,7 @@ execute: |
   # the secret plug exists but is intentionally never auto-connected;
   # an unconnected lookup must fail cleanly (exit 3), never crash or hang
   workshop exec -- bash -c \
-    'workshopctl get-secret omp.gateway-token >/dev/null 2>&1; echo "exit:$?"' \
+    'workshopctl get-secret omp.omp-gateway-token >/dev/null 2>&1; echo "exit:$?"' \
     | MATCH 'exit:3'
 
 debug: |
