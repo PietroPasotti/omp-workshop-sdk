@@ -137,10 +137,9 @@ workshop connect <workshop>/omp:omp-gateway <workshop>/system:omp-gateway
 workshop connect <workshop>/omp:omp-gateway-token <workshop>/system:omp-gateway-token
 ```
 
-**4. Point a single provider at the gateway** in `~/.omp/agent/models.yml`,
-using omp's own `!<command>` config indirection to fetch the token at read
-time instead of writing it to disk, and `discovery` to list every model the
-gateway can reach:
+**4.** The SDK's `setup-project` hook creates `~/.omp/agent/models.yml` with
+a `gw` provider pointed at the gateway — but only if that file doesn't
+already exist yet, so it never overwrites your own config:
 
 ```yaml
 providers:
@@ -152,13 +151,18 @@ providers:
       type: openai-models-list
 ```
 
-The gateway routes by the model id you ask for, not by this block's `api:`
-wire format — that field only shapes *your* request to the gateway, not
-which upstream it dispatches to. One block like this reaches every provider
-the broker holds a credential for (`gw/github-copilot/gpt-5`,
-`gw/openrouter/...`, and so on); you don't need a provider block per
-upstream. List models with `omp models` once connected, or run
-`--model <id>` directly if you already know it.
+`apiKey` uses omp's own `!<command>` config indirection to fetch the token
+at read time instead of writing it to disk. The gateway routes by the model
+id you ask for, not by this block's `api:` wire format — that field only
+shapes *your* request to the gateway, not which upstream it dispatches to.
+One block like this reaches every provider the broker holds a credential
+for (`gw/github-copilot/gpt-5`, `gw/openrouter/...`, and so on); you don't
+need a provider block per upstream. List models with `omp models` once
+connected, or run `--model <id>` directly if you already know it.
+
+If `models.yml` already existed before you wired the plugs (or you want a
+different provider id), add the `gw` block yourself — the hook only acts on
+a missing file, it never merges into one.
 
 If the secret plug is disconnected, `workshopctl get-secret` fails and omp
 falls back to its normal local credential resolution — the workshop stays
