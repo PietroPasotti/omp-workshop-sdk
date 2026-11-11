@@ -137,26 +137,28 @@ workshop connect <workshop>/omp:omp-gateway <workshop>/system:omp-gateway
 workshop connect <workshop>/omp:omp-gateway-token <workshop>/system:omp-gateway-token
 ```
 
-**4. Point a provider at the gateway** in `~/.omp/agent/models.yml`, using
-omp's own `!<command>` config indirection to fetch the token at read time
-instead of writing it to disk:
+**4. Point a single provider at the gateway** in `~/.omp/agent/models.yml`,
+using omp's own `!<command>` config indirection to fetch the token at read
+time instead of writing it to disk, and `discovery` to list every model the
+gateway can reach:
 
 ```yaml
 providers:
-  anthropic:
+  gw:
     baseUrl: http://localhost:4000
     apiKey: "!workshopctl get-secret omp.omp-gateway-token"
     api: anthropic-messages
+    discovery:
+      type: openai-models-list
 ```
 
-The `baseUrl` shape depends on the route's wire format: `anthropic-messages`
-takes the gateway root (`http://localhost:4000`, matching `api.anthropic.com`'s
-own convention), while `openai-completions`/`openai-responses` need the
-`/v1` suffix (`http://localhost:4000/v1`, matching `api.openai.com/v1`) —
-the gateway always serves at `/v1/messages` / `/v1/chat/completions` /
-`/v1/responses` regardless. Repeat the block (new `providers.<id>` key,
-matching `api:` and `baseUrl` shape) for every provider you want routed
-through the gateway instead of a locally-held key.
+The gateway routes by the model id you ask for, not by this block's `api:`
+wire format — that field only shapes *your* request to the gateway, not
+which upstream it dispatches to. One block like this reaches every provider
+the broker holds a credential for (`gw/github-copilot/gpt-5`,
+`gw/openrouter/...`, and so on); you don't need a provider block per
+upstream. List models with `omp models` once connected, or run
+`--model <id>` directly if you already know it.
 
 If the secret plug is disconnected, `workshopctl get-secret` fails and omp
 falls back to its normal local credential resolution — the workshop stays
