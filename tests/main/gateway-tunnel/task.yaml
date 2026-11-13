@@ -1,0 +1,34 @@
+summary: Bridge the gateway tunnel plug to a host listener and prove the
+  secret plug stays optional on ${BASE}
+
+prepare: |
+  envsubst '${BASE}' <workshop.yaml.in >workshop.yaml
+  # Stand in for a host-side `omp auth-gateway serve` listener.
+  python3 -m http.server 4000 --bind 127.0.0.1 >/dev/null 2>&1 &
+  echo $! >listener.pid
+  workshop launch
+  workshop connect test-omp-gateway/omp:omp-gateway test-omp-gateway/system:omp-gateway
+
+restore: |
+  workshop remove test-omp-gateway || true
+  kill "$(cat listener.pid)" 2>/dev/null || true
+  rm -f listener.pid workshop.yaml
+
+execute: |
+  # workshop stays healthy with the secret plug left unconnected
+  workshop info | MATCH 'status:\s+ready'
+
+  # the tunnel plug must bridge to the host listener standing in for the gateway
+  workshop exec -- \
+    python3 -c "import socket; socket.create_connection(('localhost', 4000), timeout=5)"
+
+  # the secret plug exists but is intentionally never auto-connected;
+  # an unconnected lookup must fail cleanly (exit 3), never crash or hang
+  workshop exec -- bash -c \
+    'workshopctl get-secret omp.omp-gateway-token >/dev/null 2>&1; echo "exit:$?"' \
+    | MATCH 'exit:3'
+
+debug: |
+  workshop tasks
+  workshop connections test-omp-gateway || true
+  cat listener.pid 2>/dev/null || true

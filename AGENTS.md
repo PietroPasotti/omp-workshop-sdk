@@ -14,8 +14,11 @@ at their real host `~/.omp` instead.
 ## Repo structure
 
 ```
-sdkcraft.yaml          SDK definition (parts, plugs)
+sdkcraft.yaml          SDK definition (parts, plugs: omp-home mount, omp-gateway tunnel,
+                       omp-gateway-token secret)
 hooks/setup-base       Adds $SDK/bin to PATH; installs bash completions (runs as root)
+hooks/setup-project    Seeds ~/.omp/agent/models.yml with a `gw` provider pointed at the
+                       gateway tunnel, only if that file doesn't already exist
 hooks/check-health     Verifies omp --version (runs as root)
 VERSION                Current upstream version (single line, e.g. 17.0.1)
 renovate.json          Renovate config — watches can1357/oh-my-pi github-releases
@@ -54,7 +57,9 @@ renovate.json          Renovate config — watches can1357/oh-my-pi github-relea
   Host source is a private directory Workshop allocates under `$XDG_DATA_HOME` — an SDK cannot
   mount an arbitrary host path. Users override with
   `workshop remount <ws>/omp:omp-home ~/.omp` (stop workshop first).
-- **No network service**: omp is a CLI tool; no tunnel slot needed
+- **Gateway tunnel**: `omp-gateway` (tunnel, manual-connect) bridges to a host-side
+  `omp auth-gateway serve`; `omp-gateway-token` (secret, manual-connect) is its bearer
+  token. Neither auto-connects. See README "Connect omp to a host auth-gateway".
 - **No GPU plug**: omp calls external AI APIs, no local GPU needed
 - **Binary is self-contained**: Bun `--compile` output; no system runtime deps required
 

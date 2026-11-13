@@ -1,0 +1,16 @@
+#!/usr/bin/bash
+
+MODELS_YML="$HOME/.omp/agent/models.yml"
+
+if [[ ! -f "$MODELS_YML" ]]; then
+	mkdir -p "$(dirname "$MODELS_YML")"
+	cat >"$MODELS_YML" <<'EOF'
+providers:
+  gw:
+    baseUrl: http://localhost:4000
+    apiKey: "!workshopctl get-secret omp.omp-gateway-token"
+    api: anthropic-messages
+    discovery:
+      type: openai-models-list
+EOF
+fi
