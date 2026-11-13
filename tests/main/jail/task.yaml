@@ -1,0 +1,93 @@
+summary: The write/network jail wraps omp and its guardrail scripts enforce
+  the advertised rules on ${BASE}
+
+prepare: |
+  envsubst '${BASE}' <workshop.yaml.in >workshop.yaml
+  workshop launch
+
+restore: |
+  workshop remove test-omp-jail || true
+  rm -f workshop.yaml
+
+execute: |
+  # the real binary must survive the full unshare/mount/setpriv/landlock
+  # chain intact - this is the actual PATH entry every user gets
+  workshop exec -- bash -c 'command -v omp' | MATCH '/bin/omp$'
+  workshop exec -- omp --version | grep -qE '[0-9]+\.[0-9]+\.[0-9]+'
+
+  # set up a throwaway repo with every guardrail-relevant path, then drive
+  # the exact scripts the wrapper chains into (omp-jail-mount, omp-jail-exec)
+  # with a test command in place of omp.real, so the enforcement itself is
+  # exercised end to end using the packed SDK's own installed scripts
+  workshop exec -- bash -c '
+    set -e
+    rm -rf /project/repo && mkdir -p /project/repo && cd /project/repo
+    git init -q
+    git config user.email t@t.com && git config user.name t
+    echo "SECRET=1" > .env
+    mkdir -p .github/workflows deploy
+    echo "name: ci" > .github/workflows/ci.yml
+    echo "replicas: 1" > deploy/manifest.yml
+    echo readme > README.md
+    git add -A && git commit -q -m init
+  '
+
+  workshop exec -- bash -c '
+    set -e
+    cd /project/repo
+    unshare --user -r --mount --propagation private -- \
+      omp-jail-mount 5 /project/repo/.git/hooks /project/repo/.git/config \
+        /project/repo/.github/workflows /project/repo/deploy /project/repo/.env \
+      omp-jail-exec 3 /project "$HOME/.omp" /tmp 1 443 \
+      bash -c "
+        set -e
+        echo malicious > .git/hooks/pre-commit 2>/dev/null && echo FAIL_HOOKS_WRITABLE || echo ok-hooks-blocked
+        echo leak > .env 2>/dev/null && echo FAIL_ENV_WRITABLE || echo ok-env-blocked
+        echo tamper > .github/workflows/ci.yml 2>/dev/null && echo FAIL_CI_WRITABLE || echo ok-ci-blocked
+        echo tamper > deploy/manifest.yml 2>/dev/null && echo FAIL_DEPLOY_WRITABLE || echo ok-deploy-blocked
+        echo x > /var/tmp/escape_test 2>/dev/null && echo FAIL_ESCAPED_PROJECT || echo ok-outside-blocked
+        echo more >> README.md
+        git add -A && git commit -q -m second
+        git log --oneline | wc -l
+        mkdir newtopdir && echo hi > newtopdir/f.txt && cat newtopdir/f.txt
+      "
+  ' >output.log
+  cat output.log
+
+  MATCH 'ok-hooks-blocked' <output.log
+  MATCH 'ok-env-blocked' <output.log
+  MATCH 'ok-ci-blocked' <output.log
+  MATCH 'ok-deploy-blocked' <output.log
+  MATCH 'ok-outside-blocked' <output.log
+  MATCH '^2$' <output.log          # both commits landed: guardrail didn't break git
+  MATCH '^hi$' <output.log         # a brand-new top-level file/dir still works
+  NOMATCH 'FAIL_' <output.log
+
+  # network: only the allow-listed port is reachable
+  workshop exec -- bash -c '
+    python3 -c "import socket,time; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); s.bind((\"127.0.0.1\",18443)); s.listen(1); time.sleep(5)" &
+    python3 -c "import socket,time; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); s.bind((\"127.0.0.1\",18081)); s.listen(1); time.sleep(5)" &
+    sleep 0.5
+    unshare --user -r --mount --propagation private -- \
+      omp-jail-mount 0 \
+      omp-jail-exec 1 /tmp 1 18443 \
+      bash -c "
+        timeout 2 bash -c \"exec 3<>/dev/tcp/127.0.0.1/18443\" && echo ok-allowed-port
+        timeout 2 bash -c \"exec 3<>/dev/tcp/127.0.0.1/18081\" 2>/dev/null && echo FAIL_PORT_NOT_SCOPED || echo ok-port-scoped
+      "
+  ' >net.log
+  cat net.log
+  MATCH 'ok-allowed-port' <net.log
+  MATCH 'ok-port-scoped' <net.log
+  NOMATCH 'FAIL_' <net.log
+
+  # the OMP_JAIL=0 escape hatch must bypass the jail entirely
+  workshop exec -- bash -c 'OMP_JAIL=0 omp --version' | grep -qE '[0-9]+\.[0-9]+\.[0-9]+'
+
+  # health must still be okay with the jail wrapping every omp invocation
+  workshop info | MATCH 'status:\s+ready'
+
+debug: |
+  workshop tasks
+  cat output.log 2>/dev/null || true
+  cat net.log 2>/dev/null || true

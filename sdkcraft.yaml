@@ -42,7 +42,15 @@ parts:
         *) echo "unsupported arch: $CRAFT_ARCH_BUILD_FOR" >&2; exit 1 ;;
       esac
       curl -fLO "https://github.com/can1357/oh-my-pi/releases/download/v${VERSION}/${ASSET}"
-      mv "$ASSET" omp
-      chmod +x omp
+      mv "$ASSET" omp.real
+      chmod +x omp.real
+    organize:
+      omp.real: bin/omp.real
+  wrapper:
+    plugin: dump
+    source: wrapper
+    source-type: local
     organize:
       omp: bin/omp
+      omp-jail-mount: bin/omp-jail-mount
+      omp-jail-exec: bin/omp-jail-exec

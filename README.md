@@ -70,6 +70,52 @@ omp config set providers.anthropic.apiKey sk-ant-...
 All changes are persisted to a Workshop-managed host directory through the
 `omp-home` mount and survive SDK updates.
 
+### Guardrails: the write/network jail
+
+Every `omp` invocation runs inside a self-imposed, kernel-enforced jail —
+no host configuration, no `lxc config`, nothing outside this SDK. It uses
+two independent, unprivileged Linux mechanisms (verified against the exact
+Workshop `lxd-container` runtime, not just in theory):
+
+- A private mount namespace (`unshare --user --mount`) bind-remounts a
+  fixed set of paths **read-only** before `omp` ever starts:
+  `.git/hooks`, `.git/config`, every `.env*` file at the project root,
+  `.github/workflows`, and `deploy/` (all relative to `/project`; a path
+  that doesn't exist is skipped). This is what stops hook injection,
+  `.git/config` tampering (e.g. rewriting `core.hooksPath`), secret-file
+  writes, and CI/deploy tampering — note it's `.git/hooks` and
+  `.git/config` specifically, not all of `.git`: normal `git add`/
+  `git commit`/`git merge` keep working, since they write to
+  `.git/objects`, `.git/index`, and `.git/refs`, not the two protected
+  files.
+- A [Landlock](https://docs.kernel.org/userspace-api/landlock.html) ruleset
+  then denies every file write/create/remove/rename and outbound TCP
+  connect everywhere **except** `/project`, `~/.omp`, and `/tmp` (writes)
+  and ports `443`, `80`, and `4000` (connects) — granted recursively, so
+  creating brand-new top-level files and directories in `/project` still
+  works. `/dev/null`, `/dev/zero`, `/dev/full`, `/dev/random`, and
+  `/dev/urandom` stay writable everywhere too — redirecting to `/dev/null`
+  is near-universal (git itself does it) and discarding/reading bytes
+  there has no write-side security implication. Capabilities are dropped
+  and `no_new_privs` is set first, so neither `sudo` nor a retained
+  `CAP_SYS_ADMIN` can undo any of this from inside the jailed process
+  tree. Reads are never restricted — this is a write/network guardrail,
+  not a read sandbox.
+
+Tune or disable it with environment variables (set them before `omp` runs,
+e.g. in `~/.profile` or the invoking shell):
+
+```bash
+# Add more read-only paths, relative to /project, space-separated
+export OMP_JAIL_EXTRA_RO="secrets.yaml infra/terraform"
+
+# Change the allowed outbound TCP ports (comma-separated)
+export OMP_JAIL_CONNECT_TCP="443,80,4000,8443"
+
+# Bypass the jail entirely for this invocation
+OMP_JAIL=0 omp ...
+```
+
 ### Shell completions
 
 Bash completions are installed automatically. For other shells:

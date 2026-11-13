@@ -1,0 +1,4 @@
+name: test-omp-jail
+base: ${BASE}
+sdks:
+  - name: try-omp

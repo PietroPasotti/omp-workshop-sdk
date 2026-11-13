@@ -1,0 +1,54 @@
+#!/usr/bin/bash
+# omp - jailed launcher for the real omp binary (omp.real, next to this script).
+#
+# Wraps every omp invocation in a Landlock + mount-namespace guardrail:
+#   - the project tree (/project), ~/.omp, and /tmp stay fully read-write
+#   - .git/hooks, .git/config, .env*, .github/workflows, and deploy/ (all
+#     relative to /project) are bind-remounted read-only first, so no
+#     Landlock allow-rule ever covers them even though the broader /project
+#     grant does
+#   - everywhere else, every write/create/remove/rename right is denied
+#     (not just unwritten-to - actively denied, including to a namespaced
+#     root that still held full capabilities, which is why capabilities are
+#     dropped before this takes effect: see omp-jail-mount)
+#   - outbound TCP is limited to OMP_JAIL_CONNECT_TCP (default covers HTTPS,
+#     HTTP, and port 4000 for a local provider-gateway proxy, if one is used)
+# Reads are never restricted: this is a write/network guardrail, not a read
+# sandbox, matching the project's actual threat model (hook injection,
+# secret exfiltration, CI/deploy tampering - not "the agent can't see its
+# own files").
+#
+# Set OMP_JAIL=0 to bypass all of this and run the real binary directly.
+set -euo pipefail
+
+bindir=$(dirname "$(readlink -f "$0")")
+real="$bindir/omp.real"
+
+if [[ "${OMP_JAIL:-1}" == "0" ]]; then
+	exec "$real" "$@"
+fi
+
+project=/project
+ro_paths=()
+read -ra extra_ro <<<"${OMP_JAIL_EXTRA_RO:-}"
+if [[ -d "$project" ]]; then
+	for rel in .git/hooks .git/config .github/workflows deploy "${extra_ro[@]}"; do
+		[[ -z "$rel" ]] && continue
+		p="$project/$rel"
+		[[ -e "$p" ]] && ro_paths+=("$p")
+	done
+	shopt -s nullglob dotglob
+	for p in "$project"/.env*; do
+		[[ -f "$p" ]] && ro_paths+=("$p")
+	done
+	shopt -u nullglob dotglob
+fi
+
+rw_dirs=("$project" "$HOME/.omp" /tmp)
+
+IFS=',' read -ra ports <<<"${OMP_JAIL_CONNECT_TCP:-443,80,4000}"
+
+exec unshare --user -r --mount --propagation private -- \
+	"$bindir/omp-jail-mount" "${#ro_paths[@]}" "${ro_paths[@]}" \
+	"$bindir/omp-jail-exec" "${#rw_dirs[@]}" "${rw_dirs[@]}" "${#ports[@]}" "${ports[@]}" \
+	"$real" "$@"

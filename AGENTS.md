@@ -17,6 +17,12 @@ at their real host `~/.omp` instead.
 sdkcraft.yaml          SDK definition (parts, plugs)
 hooks/setup-base       Adds $SDK/bin to PATH; installs bash completions (runs as root)
 hooks/check-health     Verifies omp --version (runs as root)
+wrapper/omp            Jailed launcher: every `omp` invocation runs through this instead
+                       of the real binary (installed as omp.real next to it)
+wrapper/omp-jail-mount Bind-remounts .git/hooks, .git/config, .env*, .github/workflows,
+                       deploy/ read-only inside a private mount namespace
+wrapper/omp-jail-exec  Builds the Landlock ruleset (write/network allow-list) and execs
+                       into omp.real
 VERSION                Current upstream version (single line, e.g. 17.0.1)
 renovate.json          Renovate config — watches can1357/oh-my-pi github-releases
 .github/workflows/
@@ -56,6 +62,12 @@ renovate.json          Renovate config — watches can1357/oh-my-pi github-relea
   `workshop remount <ws>/omp:omp-home ~/.omp` (stop workshop first).
 - **No network service**: omp is a CLI tool; no tunnel slot needed
 - **No GPU plug**: omp calls external AI APIs, no local GPU needed
+- **Write/network jail**: every `omp` invocation is wrapped (`wrapper/omp` →
+  `omp-jail-mount` → `omp-jail-exec` → `omp.real`) in an unprivileged mount-namespace +
+  Landlock guardrail — writes/connects are denied outside `/project`, `~/.omp`, `/tmp`
+  (ports 443/80/4000), and `.git/hooks`, `.git/config`, `.env*`, `.github/workflows`,
+  `deploy/` are read-only even inside `/project`. `OMP_JAIL=0` bypasses it;
+  `OMP_JAIL_EXTRA_RO` / `OMP_JAIL_CONNECT_TCP` tune it. See README "Guardrails" section.
 - **Binary is self-contained**: Bun `--compile` output; no system runtime deps required
 
 ## Branch/CI structure

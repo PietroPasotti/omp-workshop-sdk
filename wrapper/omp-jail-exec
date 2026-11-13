@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""
+omp-jail-exec <N_rw> <rw-dir>... <N_ports> <port>... -- <command> <args...>
+
+Final stage of the omp jail chain. Runs inside the private mount/user
+namespace set up by omp-jail-mount, after capabilities have already been
+dropped by setpriv. Builds a Landlock ruleset that denies every
+file-creation/write/remove/rename right everywhere except the given
+<rw-dir> roots (granted recursively, so new files created under them stay
+writable) and a fixed set of discard/entropy device nodes (/dev/null,
+/dev/zero, /dev/full, /dev/random, /dev/urandom - always writable,
+regardless of rw_dirs, since redirecting to /dev/null is near-universal
+and these carry no write-side security implication), and denies outbound
+TCP connects except to the given ports. Read and execute access are left
+completely unrestricted - this is a write/network guardrail, not a read
+sandbox.
+
+Then execve()s into <command> <args...>, replacing this process.
+
+Landlock access-right bit values are from <linux/landlock.h> and are
+syscall-number-stable across x86_64 and the generic (aarch64) table, which
+is why this is safe to hardcode rather than resolve per architecture.
+"""
+import ctypes
+import os
+import sys
+
+libc = ctypes.CDLL(None, use_errno=True)
+
+PR_SET_NO_NEW_PRIVS = 38
+SYS_LANDLOCK_CREATE_RULESET = 444
+SYS_LANDLOCK_ADD_RULE = 445
+SYS_LANDLOCK_RESTRICT_SELF = 446
+LANDLOCK_RULE_PATH_BENEATH = 1
+LANDLOCK_RULE_NET_PORT = 2
+
+WRITE_FILE = 1 << 1
+REMOVE_DIR = 1 << 4
+REMOVE_FILE = 1 << 5
+MAKE_CHAR = 1 << 6
+MAKE_DIR = 1 << 7
+MAKE_REG = 1 << 8
+MAKE_SOCK = 1 << 9
+MAKE_FIFO = 1 << 10
+MAKE_BLOCK = 1 << 11
+MAKE_SYM = 1 << 12
+REFER = 1 << 13
+TRUNCATE = 1 << 14
+
+WRITE_RIGHTS = (
+	WRITE_FILE | REMOVE_DIR | REMOVE_FILE | MAKE_CHAR | MAKE_DIR | MAKE_REG
+	| MAKE_SOCK | MAKE_FIFO | MAKE_BLOCK | MAKE_SYM | REFER | TRUNCATE
+)
+NET_CONNECT_TCP = 1 << 1
+
+
+class RulesetAttr(ctypes.Structure):
+	_fields_ = [("handled_access_fs", ctypes.c_uint64), ("handled_access_net", ctypes.c_uint64)]
+
+
+class PathBeneathAttr(ctypes.Structure):
+	_fields_ = [("allowed_access", ctypes.c_uint64), ("parent_fd", ctypes.c_int32)]
+
+
+class NetPortAttr(ctypes.Structure):
+	_fields_ = [("allowed_access", ctypes.c_uint64), ("port", ctypes.c_uint64)]
+
+
+def die(what):
+	err = ctypes.get_errno()
+	sys.stderr.write(f"omp-jail-exec: {what} failed: {os.strerror(err)}\n")
+	sys.exit(1)
+
+
+def main(argv):
+	pos = 0
+	n_rw = int(argv[pos]); pos += 1
+	rw_dirs = argv[pos:pos + n_rw]; pos += n_rw
+	n_ports = int(argv[pos]); pos += 1
+	ports = [int(p) for p in argv[pos:pos + n_ports]]; pos += n_ports
+	command = argv[pos:]
+
+	if not command:
+		sys.stderr.write("omp-jail-exec: no command given\n")
+		sys.exit(1)
+
+	if libc.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) < 0:
+		die("prctl(PR_SET_NO_NEW_PRIVS)")
+
+	attr = RulesetAttr(handled_access_fs=WRITE_RIGHTS, handled_access_net=NET_CONNECT_TCP)
+	rfd = libc.syscall(SYS_LANDLOCK_CREATE_RULESET, ctypes.byref(attr), ctypes.sizeof(attr), 0)
+	if rfd < 0:
+		die("landlock_create_ruleset")
+	DEVICE_RIGHTS = WRITE_FILE | TRUNCATE
+	# /dev/null is opened by near-everything via `> /dev/null`/`2>&1 /dev/null`
+	# redirection (including git itself, as seen with the jail's own test
+	# harness) - these discard/entropy device nodes carry no write-side
+	# security implication (nothing persists), so they're always writable
+	# regardless of rw_dirs.
+	for dev in ("/dev/null", "/dev/zero", "/dev/full", "/dev/random", "/dev/urandom"):
+		if not os.path.exists(dev):
+			continue
+		fd = os.open(dev, os.O_PATH)
+		try:
+			pb = PathBeneathAttr(allowed_access=DEVICE_RIGHTS, parent_fd=fd)
+			if libc.syscall(SYS_LANDLOCK_ADD_RULE, rfd, LANDLOCK_RULE_PATH_BENEATH, ctypes.byref(pb), 0) < 0:
+				die(f"landlock_add_rule (device {dev})")
+		finally:
+			os.close(fd)
+
+	for d in rw_dirs:
+		os.makedirs(d, exist_ok=True)
+		fd = os.open(d, os.O_PATH | os.O_DIRECTORY)
+		try:
+			pb = PathBeneathAttr(allowed_access=WRITE_RIGHTS, parent_fd=fd)
+			if libc.syscall(SYS_LANDLOCK_ADD_RULE, rfd, LANDLOCK_RULE_PATH_BENEATH, ctypes.byref(pb), 0) < 0:
+				die(f"landlock_add_rule (path {d})")
+		finally:
+			os.close(fd)
+
+	for p in ports:
+		np = NetPortAttr(allowed_access=NET_CONNECT_TCP, port=p)
+		if libc.syscall(SYS_LANDLOCK_ADD_RULE, rfd, LANDLOCK_RULE_NET_PORT, ctypes.byref(np), 0) < 0:
+			die(f"landlock_add_rule (port {p})")
+
+	if libc.syscall(SYS_LANDLOCK_RESTRICT_SELF, rfd, 0) < 0:
+		die("landlock_restrict_self")
+	os.close(rfd)
+
+	os.execvpe(command[0], command, os.environ)
+
+
+if __name__ == "__main__":
+	main(sys.argv[1:])

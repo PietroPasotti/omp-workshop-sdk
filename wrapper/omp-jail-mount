@@ -1,0 +1,34 @@
+#!/usr/bin/bash
+# omp-jail-mount <N_ro> <ro-path>... -- <command> <args...>
+#
+# Runs as namespaced root (via `unshare --user -r --mount`, see wrapper/omp)
+# inside a private mount namespace. Bind-remounts each <ro-path> read-only
+# in place - this is what carves write-protected subtrees (.git/hooks,
+# .git/config, ...) out of an otherwise-writable project tree; Landlock's
+# allow-list model can't express that carve-out on its own without breaking
+# the ability to create new top-level files later (see README).
+#
+# A path that doesn't exist is skipped, not fatal - not every repo has
+# .github/workflows or a deploy/ directory.
+#
+# Then drops every capability (the CAP_SYS_ADMIN used for the mounts above
+# would otherwise let the wrapped process remount its own guardrails back
+# to read-write) and chains into the remaining argv, which is the Landlock
+# stage (omp-jail-exec) followed by the real omp binary and its arguments.
+set -euo pipefail
+
+n=$1
+shift
+ro_paths=()
+for ((i = 0; i < n; i++)); do
+	ro_paths+=("$1")
+	shift
+done
+
+for p in "${ro_paths[@]}"; do
+	[[ -e "$p" ]] || continue
+	mount --bind "$p" "$p"
+	mount -o remount,bind,ro "$p"
+done
+
+exec setpriv --bounding-set=-all --inh-caps=-all --no-new-privs -- "$@"
