@@ -6,3 +6,4 @@
 tests/.spread-reuse.yaml
 # staged try SDKs for local spread runs (populated by: cp -r ~/.local/share/workshop/try/omp tests/sdks/)
 tests/sdks/
+__pycache__/
