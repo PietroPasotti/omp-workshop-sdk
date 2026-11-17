@@ -2,7 +2,7 @@
 
 MODELS_YML="$HOME/.omp/agent/models.yml"
 
-if [[ ! -f "$MODELS_YML" ]]; then
+if [[ ! -f "$MODELS_YML" && ! -f "$HOME/.omp/agent/models.yaml" && ! -f "$HOME/.omp/agent/models.json" ]]; then
 	mkdir -p "$(dirname "$MODELS_YML")"
 	cat >"$MODELS_YML" <<'EOF'
 providers:

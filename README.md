@@ -138,8 +138,8 @@ workshop connect <workshop>/omp:omp-gateway-token <workshop>/system:omp-gateway-
 ```
 
 **4.** The SDK's `setup-project` hook creates `~/.omp/agent/models.yml` with
-a `gw` provider pointed at the gateway — but only if that file doesn't
-already exist yet, so it never overwrites your own config:
+a `gw` provider pointed at the gateway — but only if no `models.yml`,
+`models.yaml`, or legacy `models.json` already exists, preserving your config:
 
 ```yaml
 providers:
@@ -160,13 +160,13 @@ for (`gw/github-copilot/gpt-5`, `gw/openrouter/...`, and so on); you don't
 need a provider block per upstream. List models with `omp models` once
 connected, or run `--model <id>` directly if you already know it.
 
-If `models.yml` already existed before you wired the plugs (or you want a
-different provider id), add the `gw` block yourself — the hook only acts on
-a missing file, it never merges into one.
+If any supported model-config file already existed before you wired the plugs
+(or you want a different provider id), add the `gw` block yourself — the hook
+only seeds an unconfigured home; it never merges into existing configuration.
 
-If the secret plug is disconnected, `workshopctl get-secret` fails and omp
-falls back to its normal local credential resolution — the workshop stays
-healthy either way.
+If the secret plug is disconnected, `workshopctl get-secret` fails and the
+`gw` provider has no API key; it does not fall back to local credentials.
+The workshop stays healthy, but gateway requests require both plugs to be connected.
 
 ### Shell completions
 

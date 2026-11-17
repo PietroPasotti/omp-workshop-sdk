@@ -18,7 +18,7 @@ sdkcraft.yaml          SDK definition (parts, plugs: omp-home mount, omp-gateway
                        omp-gateway-token secret)
 hooks/setup-base       Adds $SDK/bin to PATH; installs bash completions (runs as root)
 hooks/setup-project    Seeds ~/.omp/agent/models.yml with a `gw` provider pointed at the
-                       gateway tunnel, only if that file doesn't already exist
+                       gateway tunnel, only if no models.yml, models.yaml, or models.json exists
 hooks/check-health     Verifies omp --version (runs as root)
 VERSION                Current upstream version (single line, e.g. 17.0.1)
 renovate.json          Renovate config — watches can1357/oh-my-pi github-releases
