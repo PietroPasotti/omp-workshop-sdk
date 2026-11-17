@@ -158,7 +158,7 @@ To revert to the private Workshop-managed directory:
 
 ```bash
 workshop disconnect <workshop>/omp:omp-skills --forget
-workshop refresh <workshop>
+workshop connect <workshop>/omp:omp-skills <workshop>/system:mount
 ```
 
 ---
