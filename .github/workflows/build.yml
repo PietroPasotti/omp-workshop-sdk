@@ -14,3 +14,9 @@ jobs:
     uses: canonical/sdkcraft-actions/.github/workflows/build.yml@main
     with:
       runs-on: '["ubuntu-latest"]'
+  setup-project-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Test setup-project hook
+        run: bash .github/scripts/setup-project.test.sh

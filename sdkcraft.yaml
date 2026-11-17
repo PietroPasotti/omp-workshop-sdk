@@ -30,6 +30,11 @@ plugs:
   omp-skills:
     interface: mount
     workshop-target: /home/workshop/.agents/skills
+  omp-gateway:
+    interface: tunnel
+    endpoint: localhost:4000
+  omp-gateway-token:
+    interface: secret
 
 parts:
   omp:
