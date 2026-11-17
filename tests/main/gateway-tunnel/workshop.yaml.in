@@ -1,0 +1,9 @@
+name: test-omp-gateway
+base: ${BASE}
+sdks:
+  - name: try-omp
+  - name: system
+    slots:
+      omp-gateway:
+        interface: tunnel
+        endpoint: localhost:4000

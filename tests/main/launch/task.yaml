@@ -20,6 +20,10 @@ execute: |
   # bash completions must have been installed by setup-base
   workshop exec -- bash -c 'test -f /etc/bash_completion.d/omp.sh'
 
+  # setup-project must auto-create a default models.yml pointed at the gateway
+  workshop exec -- bash -c 'test -f ~/.omp/agent/models.yml'
+  workshop exec -- bash -c 'grep -q "baseUrl: http://localhost:4000" ~/.omp/agent/models.yml'
+
   # health check hook runs omp --version; a non-zero exit here means launch
   # already failed, so asserting the binary works above is sufficient
 
