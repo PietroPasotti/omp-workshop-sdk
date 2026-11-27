@@ -2,9 +2,9 @@ name: Bootstrap Major Track
 
 # Runs daily and on demand. Detects when the latest upstream omp major exceeds
 # the current default-branch track number, then creates the new track branch,
-# updates the versioned files, creates the SDK store track, changes the
-# default branch, and opens a PR that auto-merges to trigger the first
-# upload — fully unattended.
+# creates the SDK store track, and opens a setup PR (VERSION + renovate.json)
+# that auto-merges to trigger the first upload. The default branch is changed
+# only by a LATER run, once the setup PR has merged — never before.
 #
 # Every side effect below is idempotent: a run that fails partway (e.g. an
 # expired store credential) leaves state that the NEXT run detects and
@@ -84,6 +84,21 @@ jobs:
         run: |
           set -euo pipefail
 
+          # ── 0. Auth preflight: no side effect before this passes ────────
+          # GITHUB_TOKEN-authored PRs never get the required "build / build"
+          # check (recursion guard), so refuse bot/missing identities loudly
+          # instead of producing a PR that stays BLOCKED forever.
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::ADMIN_TOKEN is required for bootstrap side effects."
+            exit 1
+          fi
+          ACTOR=$(gh api user --jq '.login')
+          if [ -z "$ACTOR" ] || [ "$ACTOR" = "github-actions[bot]" ]; then
+            echo "::error::Bootstrap requires a user ADMIN_TOKEN; refusing GITHUB_TOKEN/bot authentication."
+            exit 1
+          fi
+          echo "Bootstrap side effects authenticated as ${ACTOR}."
+
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name  "github-actions[bot]"
 
@@ -98,23 +113,47 @@ jobs:
             echo "[1/4] Created track/${NEW_MAJOR} at ${TRACK_SHA}."
           fi
           # Local remote-tracking ref for track/N isn't fetched by the initial
-          # checkout (only the default branch is); step 2 needs it whether the
+          # checkout (only the default branch is); step 3 needs it whether the
           # branch was just created above or already existed from a prior run.
           git fetch origin \
             "refs/heads/track/${NEW_MAJOR}:refs/remotes/origin/track/${NEW_MAJOR}"
 
-          # ── 2. Setup PR: bump VERSION + renovate.json (idempotent) ──────
+          # ── 2. Store track (idempotent: tolerate "already exists") ──────
+          # Created BEFORE the setup PR lands: merging it pushes to track/N,
+          # which triggers upload.yml, and that upload needs the store track
+          # to exist already. Nothing re-dispatches a failed upload.
+          for attempt in 1 2 3; do
+            sudo snap install sdkcraft --edge --classic && break
+            [ "$attempt" -lt 3 ] && sleep $((attempt * 5))
+          done
+          if OUTPUT=$(sdkcraft create-track omp --track "${NEW_MAJOR}" 2>&1); then
+            echo "$OUTPUT"
+            echo "[2/4] Store track ${NEW_MAJOR} ready."
+          elif printf '%s' "$OUTPUT" | grep -qi "already exist"; then
+            echo "[2/4] Store track ${NEW_MAJOR} already exists."
+          else
+            echo "$OUTPUT" >&2
+            echo "::error::sdkcraft create-track failed — see log above." \
+                 "Step 1 already landed and won't be repeated;" \
+                 "the next scheduled run retries from here."
+            exit 1
+          fi
+
+          # ── 3. Setup PR: bump VERSION + renovate.json (idempotent) ──────
           # "Already merged" is detected from the VERSION file on track/N
           # itself, not from local state — safe to re-run after any failure
-          # in a later stage without opening a duplicate PR.
+          # in a later stage without opening a duplicate PR. While the PR is
+          # unmerged this step ends the run successfully (pending); a later
+          # run resumes once it has landed. Required checks are never bypassed.
           REMOTE_VERSION=$(git show "origin/track/${NEW_MAJOR}:VERSION" 2>/dev/null || echo "")
           OPEN_PR=$(gh pr list --head "setup/track-${NEW_MAJOR}" \
             --base "track/${NEW_MAJOR}" --state open \
             --json number --jq '.[0].number // empty')
           if printf '%s' "$REMOTE_VERSION" | grep -q "^${NEW_MAJOR}\."; then
-            echo "[2/4] track/${NEW_MAJOR} VERSION already ${REMOTE_VERSION} — setup already merged."
+            echo "[3/4] track/${NEW_MAJOR} VERSION already ${REMOTE_VERSION} — setup already merged."
           elif [ -n "$OPEN_PR" ]; then
-            echo "[2/4] Setup PR #${OPEN_PR} already open — auto-merge will land it."
+            echo "[3/4] Setup PR #${OPEN_PR} already open and not merged — pending; default branch unchanged."
+            exit 0
           else
             git checkout -B "setup/track-${NEW_MAJOR}" "origin/track/${NEW_MAJOR}"
 
@@ -146,10 +185,10 @@ jobs:
             git push origin "setup/track-${NEW_MAJOR}"
 
             # build.yml uses branches: ["track/*"] so it fires on this PR.
-            # Merging (below) is done with ADMIN_TOKEN, a real user PAT, so
-            # unlike GITHUB_TOKEN it DOES trigger push-based workflows —
-            # upload.yml fires on its own once this lands, no manual
-            # poll-and-dispatch needed.
+            # The PR is created and merged with ADMIN_TOKEN, a real user PAT,
+            # so unlike GITHUB_TOKEN it DOES trigger the required checks and
+            # push-based workflows — upload.yml fires on its own once this
+            # lands, no manual poll-and-dispatch needed.
             PR_URL=$(gh pr create \
               --base  "track/${NEW_MAJOR}" \
               --head  "setup/track-${NEW_MAJOR}" \
@@ -157,24 +196,16 @@ jobs:
               --body  "Automated bootstrap: bumps VERSION to ${NEW_VERSION} and \
             updates renovate.json for the ${NEW_MAJOR}/edge track.")
             gh pr merge --auto --merge --delete-branch "${PR_URL}"
-            echo "[2/4] Opened ${PR_URL} with auto-merge enabled."
+            echo "[3/4] Opened ${PR_URL} with auto-merge enabled — pending; default branch unchanged."
+            exit 0
           fi
 
-          # ── 3. Store track (idempotent: tolerate "already exists") ──────
-          for attempt in 1 2 3; do
-            sudo snap install sdkcraft --edge --classic && break
-            [ "$attempt" -lt 3 ] && sleep $((attempt * 5))
-          done
-          if OUTPUT=$(sdkcraft create-track omp --track "${NEW_MAJOR}" 2>&1); then
-            echo "$OUTPUT"
-            echo "[3/4] Store track ${NEW_MAJOR} ready."
-          elif printf '%s' "$OUTPUT" | grep -qi "already exist"; then
-            echo "[3/4] Store track ${NEW_MAJOR} already exists."
-          else
-            echo "$OUTPUT" >&2
-            echo "::error::sdkcraft create-track failed — see log above." \
-                 "Steps 1-2 above already landed and won't be repeated;" \
-                 "the next scheduled run retries from here."
+          # ── Gate: setup must be merged before the default branch moves ──
+          git fetch origin \
+            "refs/heads/track/${NEW_MAJOR}:refs/remotes/origin/track/${NEW_MAJOR}"
+          REMOTE_VERSION=$(git show "origin/track/${NEW_MAJOR}:VERSION" 2>/dev/null || echo "")
+          if ! printf '%s' "$REMOTE_VERSION" | grep -q "^${NEW_MAJOR}\."; then
+            echo "::error::track/${NEW_MAJOR} setup is not merged; refusing to change the default branch."
             exit 1
           fi
 
